@@ -1,0 +1,2590 @@
+---
+title: "Mammal Predictor"
+author: "Ryan J. Cooper"
+date: "11/1/2020"
+output:
+  pdf_document:
+    toc: yes
+    toc_depth: '3'
+  html_document:
+    df_print: paged
+    toc: yes
+    toc_depth: 3
+editor_options:
+  chunk_output_type: inline
+---
+
+```{r knit setup, include=FALSE, message=FALSE, warning=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message=FALSE, warning=FALSE, cache = TRUE)
+```
+
+# Introduction
+
+This project was developed for the HarvardX Data Science Professional, Machine Learning Capstone Project. 
+
+Data available from the Ecological Society of America (ESA) PanTHERIA dataset contains descriptive attributes concerning over 5,400 individual mammal species. Additional data derived from The Global Biodiversity Information Facility (GBIF) contains extended attributes and details that will support exploration of the Pantheria dataset. These data sources will be used in the construction and training of a machine learning classification model which will try to correctly classify mammals into their most likely taxonomy given a set of identifying Physical, Behavioral and Reproductive characteristics. 
+
+* Physical characteristics include body mass, head + body length, and forearm length. 
+* Behavioral characteristics include population density, diet breadth and trophic level, geographic locale, and activity cycle.
+* Reproductive characteristics include longevity, gestation, and weaning ages. 
+
+The data set also contains data related to many other characteristics, but many of the columns do not have very complete data. The combination of these various predictors should be very informative about an animals taxonomy. Greater numbers of available predictors to train on generally should increase accuracy of predictions. However, with over 50 possible original columns available, it is necessary to identify and utilize the predictors that are most relevant, and select predictors for which there is a substantial amount of data available.
+
+To demonstrate the concept of a classification and regression tree, we will first implement the RPart package - which enable the visualization of a single decision tree using conditional probability to select the relevant variables and cut off points for each split of the tree. This should give us a good sense of how a single tree would work, and provide some insight into how the model will perform when expanded to an using random forests.
+
+The general formula for conditional probability in a classification and regression tree (CART) is:
+
+$pk(x)=Pr(Y=k|X=x),fork=1,...,K$
+  
+After demonstration of the basic concept, we will shift to a random forests approach that will go beyond the CART concept by combining many trees, enabling individual trees to work together, providing greater overall accuracy, but with some loss of transparency. Random forests can be surprisingly accurate in multiple outcome classification problems.
+
+## Primer on Taxonomy
+
+Biological taxonomy is the science of classification of living organisms by related characteristics. Every organism belongs to a tree of taxa starting with the _domain_ and _kingdom_ at the top, with each successive (lower) level being more specific/descriptive, and generally having fewer species in it. The most specific taxonomic level in general use is *Species*. 
+
+The *Species* is expressed as a binomial (two word) title which incorporates the *Genus* into the title. The *Species* name will formally have the first word capitalized and the second word in lower case, which is the word that differentiates this species from others in the same *Genus*. 
+
+For example, a blue whale is of the *Genus:* Balaenoptera, *Species:* _Balaenoptera musculus_. The last word of the species name is also referred to as the _specific epithet_. In text, the species is traditionally italicized. However, for the purpose of this study, species names will not always be italicized. In some references the _Genus_ part of the binomial may be shortened to a single initial, for example, _Balaenoptera musculus_ may be shortened to _B. musculus_. 
+
+The 8 main levels or _Ranks_ of taxonomy are:*
+Domain > Kingdom > Phylum > Class > Order > Family > Genus > Species
+
+Example Taxonomy of a Blue Whale:
+Eukarya > Animalia > Chordata > Mammalia > Cetacea > Balaenopteridea > Balaenoptera > musculus
+
+All data in the ESA dataset is concerning animals from the *Class* Mammalia (mammals).  The focus of this project will be to generally identify the remaining taxonomic ranks: *Order, Family, or Genus* given a limited number of variables available for prediction.
+
+Please note, since the advent of widespread genetic testing, some re-organization of taxa has been occurring to better represent *monophyletic groups* or *clades* which share a common ancestor. One example of this is the Order _Soricomorpha_, which appears in the Pantheria dataset, but has been partially reclassified since. The Pantheria dataset was not selected for relevance and currency - but because its hierarchical structure, sparseness, and imbalanced classes makes it an interesting subject for demonstration of random forest models.
+
+## Strengths of CART & Random Forests in Taxonomy
+
+If the purpose of taxonomy is to differentiate species by combinations of unique markers, then a CART / RF approach should work well. Some individual characteristics are very predictive, when classes are very distinct such as the Cetacea; a mammal with a body mass of greater than 100,000,000 grams is *always* going to be a whale. 
+
+Other characteristics like the trophic level, terrestriality, diet breadth, or gestational age may be less predictive, unless these characteristics are used in conjunction with other characteristics. A CART / Random Forest approach should reveal which variables are most important, and provide good prediction accuracy by finding the combinations of observations that most efficiently answer the question - which Order/Family/Genus does this mammal belong to?
+
+## Limits & Challenges
+
+This model is not intended as a species-level classification tool, as it contains only one row with median values for any given species. A reasonable population of data is needed for any predictor class.
+
+The data is incomplete and any analysis performed may suffer from the _"curse of dimensionality"_ - of the characteristics selected, many observations are present on only a portion of the rows. As the number of columns increases, the data becomes relatively sparse.
+
+The number of species per taxonomical order varies greatly, with some orders having only one or two sub-families, genus, or species, and some having many individual species. This results in _unbalanced classes_, which may impact the accuracy of the final model. Predicting Chiroptera (bats) or Rodentia (rats, mice) has a much greater chance of being correct vs. guessing an obscure order with only a few species. 
+
+## Model Goals
+
+Since there are many possible outcomes, it is necessary to frame the problem carefully: What are we trying to accomplish - what are the goals of the model?
+
+* Accuracy: A measure of overall accuracy is one of the goals - we would like a model that predicts the correct order or the correct family most of the time. 
+
+* Diversity of Outcomes: We would like a model that will predict a diverse number of orders. Given the presence of many imbalanced classes, we could make a model that predicts Rodentia or Carnivora every time, and it would be correct much of the time. But what good is a model that looks at an elephant and predicts it is a rat or a wolf? We must balance the need to include minority classes. Increasing the selection of minority classes can decrease accuracy - So accuracy and diversity of outcomes are two competing forces in this model.
+
+* Balance: We would like a model that balances precision and recall. The F1 score is a good measure of this. We will record the average of the balanced F1 score for predicted class. If 8 classes are predicted there will be 8 F1 scores. The mean of those scores will be recorded and considered during model analysis.
+
+* Recursion: Given that there are so many families - the number of possible _family_ or _genus_ outcomes is too great without segmentation or recursion. We can determine the most likely order, then filter the families and re-run the model using a more focused set of data. This could be done again to predict at the genus level as well. 
+
+* Flexibility: We would like a classification model that can be flexible and take a range of inputs with as little or as much data as is available. This may necessitate a more complex approach to modeling that can adapt to a variable number of inputs, and handle missing data effectively.
+
+# Data Setup
+
+In this section we will load data, libraries, and packages, and set up the data for analysis.
+
+## Load Packages
+
+Several packages and external libraries are used by this project. Key utility packages include GGPlot2 for visualizations, dplyr for data manipulation, and the caret package for various functions. The randomforest and rpart packages contain key features used in the model construction and testing process.
+
+```{r data setup, warning=FALSE, message = FALSE}
+
+# Note: this process could take a couple of minutes
+if(!require(dplyr)) install.packages("dplyr", repos = "http://cran.us.r-project.org")
+if(!require(tidyverse)) install.packages("tidyverse", repos = "http://cran.us.r-project.org")
+if(!require(caret)) install.packages("caret", repos = "http://cran.us.r-project.org")
+if(!require(dslabs)) install.packages("dslabs", repos = "http://cran.us.r-project.org")
+if(!require(rpart.plot)) install.packages("rpart.plot", repos = "http://cran.us.r-project.org")
+if(!require(rgbif)) install.packages("rgbif", repos = "http://cran.us.r-project.org")
+if(!require(corrr)) install.packages("corrr", repos = "http://cran.us.r-project.org")
+if(!require(splitstackshape)) install.packages("splitstackshape", repos = "http://cran.us.r-project.org")
+if(!require(mice)) install.packages("mice", repos = "http://cran.us.r-project.org")
+if(!require(randomForest)) install.packages("randomForest", repos = "http://cran.us.r-project.org")
+if(!require(data.table)) install.packages("data.table", repos = "http://cran.us.r-project.org")
+
+library(randomForest)
+library(mice)
+library(tidyverse)
+library(dslabs)
+library(caret)
+library(dplyr)
+library(rpart.plot)
+library("rgbif")
+library(corrr)
+library(splitstackshape)
+library(data.table)
+
+```
+
+## Load & Process Mammal Data
+
+In this section we will preprocess the data from the ESA dataset. The ESA data contains over 50 different variables. For the purposes of this study, we're selecting a subset of variables where observations are present for 800+ rows.  The variables selected will include the taxonomic data and 12 predictor physical and behavioral characteristics. 
+
+The columns with enough observations will be copied into a new dataset and renamed for easier readability, and the data types and values will be cleaned up to work correctly with R.
+
+```{r load data}
+
+# Load data
+#METADATA: http://esapubs.org/archive/ecol/E090/184/metadata.htm
+
+#there are two data sets with overlapping data, so, I am using the larger, WR05 version.
+#zooWR93 <- read.table(
+  #"http://esapubs.org/archive/ecol/E090/184/PanTHERIA_1-0_WR93_Aug2008.txt",
+  #sep="\t", header=TRUE)
+
+#setwd("D:/RProjects/Zoo/")
+reload=TRUE
+if(reload){
+  zoo <- read.table("PanTHERIA_1-0_WR05_Aug2008.txt", sep="\t", header=TRUE)
+
+}
+
+#replace -999 with NA for correct handling in R
+#see missing data section for more details on missing data handling
+zoo[zoo==-999]<-NA
+totalrows <- nrow(zoo)
+
+```
+
+There are `r totalrows` total original rows of data in the Pantheria file.
+
+## Vernacular Name Lookup Function for Species Binomials
+
+Here we set up a lookup function to find the vernacular / common name for a Species binomial.
+
+```{r get vernacular names, fig.width=12,fig.height=8}
+#function to return a vernacular/common name for each species from GBIF
+#Note that this can't run inside a loop or DPLYR mutate- it will cause a bad request error. Names may ONLY be looked up one at a time.
+
+getvernacularname <- function(x){
+speckey <- rgbif::name_backbone(name=x)$speciesKey
+speckey <- as.numeric(speckey)
+vernac <- rgbif::name_usage(key=speckey, data='vernacularNames')
+vnames <- vernac[[2]] %>% 
+  filter(language=='eng') %>% 
+  select(vernacularName)
+vx <- unique(vnames)
+vname <- vx[which.max(tabulate(match(vnames, vx)))] %>% 
+  slice(1:1) %>% 
+  pull(vernacularName)
+vname
+}
+
+df <- data.frame()
+
+#example usage
+lookupbinomial <- 'Balaenoptera musculus'
+vernac <- getvernacularname(lookupbinomial)
+lookup <- data.frame(lookup=paste('The common name for',lookupbinomial,'is',vernac))
+df <- df %>% bind_rows(lookup)
+
+lookupbinomial <- 'Rattus rattus'
+vernac <- getvernacularname(lookupbinomial)
+lookup <- data.frame(lookup=paste('The common name for',lookupbinomial,'is',vernac))
+df <- df %>% bind_rows(lookup)
+
+lookupbinomial <- 'Canis lupus'
+vernac <- getvernacularname(lookupbinomial)
+lookup <- data.frame(lookup=paste('The common name for',lookupbinomial,'is',vernac))
+df <- df %>% bind_rows(lookup)
+df %>% knitr::kable()
+
+```
+
+This function has returned the correct common names of the various species binomials we have passed in. 
+
+## Vernacular Name Index for Orders
+
+We will also set up an index of common names for the taxonomical orders in the Mammalia family. Again, this is done to make the exploration of the data easier to understand.
+
+```{r order index}
+
+order_info <-data.frame()
+order_desc <- data.frame(taxo_order='Afrosoricida',taxo_order_desc='Tenrecs')
+order_info <- order_info %>% bind_rows(order_desc)
+order_desc <- data.frame(taxo_order='Artiodactyla',taxo_order_desc='Even-toed ungulates')
+order_info <- order_info %>% bind_rows(order_desc)
+order_desc <- data.frame(taxo_order='Carnivora',taxo_order_desc='Bears & Wolves')
+order_info <- order_info %>% bind_rows(order_desc)
+order_desc <- data.frame(taxo_order='Cetacea',taxo_order_desc='Whales & Dolphins')
+order_info <- order_info %>% bind_rows(order_desc)
+order_desc <- data.frame(taxo_order='Chiroptera',taxo_order_desc='Bats')
+order_info <- order_info %>% bind_rows(order_desc)
+order_desc <- data.frame(taxo_order='Cingulata',taxo_order_desc='Armadillos & Anteaters')
+order_info <- order_info %>% bind_rows(order_desc)
+order_desc <- data.frame(taxo_order='Dasyuromorphia',taxo_order_desc='Carnivorous Marsupials')
+order_info <- order_info %>% bind_rows(order_desc)
+order_desc <- data.frame(taxo_order='Dermoptera',taxo_order_desc='Flying Lemurs')
+order_info <- order_info %>% bind_rows(order_desc)
+order_desc <- data.frame(taxo_order='Didelphimorphia',taxo_order_desc='Opossums')
+order_info <- order_info %>% bind_rows(order_desc)
+order_desc <- data.frame(taxo_order='Diprotodontia',taxo_order_desc='Herbivorous Marsupials')
+order_info <- order_info %>% bind_rows(order_desc)
+order_desc <- data.frame(taxo_order='Erinaceomorpha',taxo_order_desc='Hedgehogs')
+order_info <- order_info %>% bind_rows(order_desc)
+order_desc <- data.frame(taxo_order='Hyracoidea',taxo_order_desc='Hydraxes')
+order_info <- order_info %>% bind_rows(order_desc)
+order_desc <- data.frame(taxo_order='Lagomorpha',taxo_order_desc='Rabbits & Hares')
+order_info <- order_info %>% bind_rows(order_desc)
+order_desc <- data.frame(taxo_order='Macroscelidea',taxo_order_desc='Elephant Shrews')
+order_info <- order_info %>% bind_rows(order_desc)
+order_desc <- data.frame(taxo_order='Microbiotheria',taxo_order_desc='Monito del montes')
+order_info <- order_info %>% bind_rows(order_desc)
+order_desc <- data.frame(taxo_order='Monotremata',taxo_order_desc='Platypus & Echidnas')
+order_info <- order_info %>% bind_rows(order_desc)
+order_desc <- data.frame(taxo_order='Notoryctemorphia',taxo_order_desc='Marsupial Mole')
+order_info <- order_info %>% bind_rows(order_desc)
+order_desc <- data.frame(taxo_order='Paucituberculata',taxo_order_desc='Shrew Opossums')
+order_info <- order_info %>% bind_rows(order_desc)
+order_desc <- data.frame(taxo_order='Peramelemorphia',taxo_order_desc='Bandicoots')
+order_info <- order_info %>% bind_rows(order_desc)
+order_desc <- data.frame(taxo_order='Perissodactyla',taxo_order_desc='Odd-toed Ungulates')
+order_info <- order_info %>% bind_rows(order_desc)
+order_desc <- data.frame(taxo_order='Pholidota',taxo_order_desc='Pangolins')
+order_info <- order_info %>% bind_rows(order_desc)
+order_desc <- data.frame(taxo_order='Pilosa',taxo_order_desc='Sloths & Anteaters')
+order_info <- order_info %>% bind_rows(order_desc)
+order_desc <- data.frame(taxo_order='Primates',taxo_order_desc='Apes & Monkeys')
+order_info <- order_info %>% bind_rows(order_desc)
+order_desc <- data.frame(taxo_order='Proboscidea',taxo_order_desc='Elephants')
+order_info <- order_info %>% bind_rows(order_desc)
+order_desc <- data.frame(taxo_order='Rodentia',taxo_order_desc='Rats & Mice')
+order_info <- order_info %>% bind_rows(order_desc)
+order_desc <- data.frame(taxo_order='Scandentia',taxo_order_desc='Treeshrews')
+order_info <- order_info %>% bind_rows(order_desc)
+order_desc <- data.frame(taxo_order='Sirenia',taxo_order_desc='Manatees & Dugongs')
+order_info <- order_info %>% bind_rows(order_desc)
+order_desc <- data.frame(taxo_order='Soricomorpha',taxo_order_desc='Moles & Shrews')
+order_info <- order_info %>% bind_rows(order_desc)
+order_desc <- data.frame(taxo_order='Tubulidentata',taxo_order_desc='Aardvarks')
+order_info <- order_info %>% bind_rows(order_desc)
+
+order_info <- order_info %>% mutate(taxo_order = as.factor(taxo_order))
+order_info <- order_info %>% mutate(taxo_order_desc = as.factor(taxo_order_desc))
+
+order_info %>% slice(1:10) %>% knitr::kable()
+```
+
+## Data Wrangling & Feature Selection
+
+In this section, we are mutating the data to be more friendly to work with. We will drop some of the fields that are not going to be used by the model.
+
+```{r data wrangling}
+#create a subset of teh original data with the variables we are interested in, with the correct data type formats
+tinyzoo <- zoo %>% 
+  dplyr::select(
+  taxo_order = MSW05_Order,
+  taxo_family = MSW05_Family,
+  taxo_genus = MSW05_Genus,
+  taxo_species = MSW05_Species,
+  headlen_mm=X13.1_AdultHeadBodyLen_mm,
+  forearmlen_mm=X8.1_AdultForearmLen_mm,
+  mass_grams=X5.1_AdultBodyMass_g,
+  mass_grams2=X5.5_AdultBodyMass_g_EXT,
+  litter_size=X15.1_LitterSize,
+  litters_peryear=X16.1_LittersPerYear,
+  litters_peryear2=X16.2_LittersPerYear_EXT,
+  gestation_days= X9.1_GestationLen_d,
+  longevity_months= X17.1_MaxLongevity_m,
+  diet_breadth=X6.1_DietBreadth,
+  pop_density= X21.1_PopulationDensity_n.km2,
+  trophic_level= X6.2_TrophicLevel,
+  terrestriality= X12.2_Terrestriality,
+  sex_maturity= X23.1_SexualMaturityAge_d,
+  wean_age= X25.1_WeaningAge_d,
+  activity_cycle= X1.1_ActivityCycle,
+  range_km2 = X26.1_GR_Area_km2,
+  max_lat = X26.2_GR_MaxLat_dd,
+  min_lat = X26.3_GR_MinLat_dd,
+  max_lng =X26.5_GR_MaxLong_dd,
+  min_lng =X26.6_GR_MinLong_dd,
+  mid_lat = X26.4_GR_MidRangeLat_dd,
+  mid_lng =X26.7_GR_MidRangeLong_dd,
+  references=References
+  ) %>%
+ mutate(
+    data_set = 'PanTHERIA_WR05_Aug2008.txt',
+    taxo_class = as.factor('Mammalia'),
+    taxo_order = as.factor(taxo_order),
+    taxo_family = as.factor(taxo_family),
+    taxo_genus = as.factor(taxo_genus),
+    taxo_species = as.factor(taxo_species),
+    taxo_binomial = as.factor(paste(taxo_genus, taxo_species)),
+    taxo_order_fam = as.factor(paste(taxo_order,'>', taxo_family)),
+    taxo_order_fam_genus = as.factor(paste(taxo_order,'>', taxo_family,'>', taxo_genus)),
+    taxo_all = as.factor(paste(taxo_class,'>',taxo_order,'>', taxo_family,'>', taxo_genus, '>', taxo_species)),
+    headlen_mm = as.numeric(headlen_mm),
+    forearmlen_mm = as.numeric(forearmlen_mm),
+    mass_grams = as.numeric(coalesce(mass_grams,mass_grams2)),
+    litter_size = as.numeric(litter_size),
+    litters_peryear = as.numeric(coalesce(litters_peryear,litters_peryear2)),
+    gestation_days = as.numeric(gestation_days),
+    longevity_months = as.numeric(longevity_months),
+    diet_breadth=as.numeric(diet_breadth),
+    pop_density= as.numeric(pop_density),
+    trophic_level= as.numeric(trophic_level),
+    terrestriality= as.numeric(terrestriality),
+    sex_maturity= as.numeric(sex_maturity),
+    activity_cycle= as.numeric(activity_cycle),
+    range_km2 = as.numeric(range_km2),
+    max_lat = as.numeric(max_lat),
+    min_lat = as.numeric(min_lat),
+    max_lng = as.numeric(max_lng),
+    min_lng = as.numeric(min_lng),
+    mid_lat = as.numeric(mid_lat),
+    mid_lng = as.numeric(mid_lng),
+    wean_age= as.numeric(wean_age),
+    marine = ifelse(taxo_order == 'Cetacea' | taxo_order == 'Sirenia',1,0),
+    flying = ifelse(taxo_order == 'Chiroptera',1,0),
+    )   %>% 
+  left_join(order_info, by="taxo_order") %>% 
+    select(data_set,
+    taxo_class,
+    taxo_order,
+    taxo_order_desc,
+    taxo_family,
+    taxo_genus,
+    taxo_order_fam,
+    taxo_order_fam_genus,
+    taxo_species,
+    taxo_binomial,
+    taxo_all,
+    references,
+    headlen_mm,
+    forearmlen_mm,
+    mass_grams,
+    litter_size,
+    litters_peryear,
+    gestation_days,
+    longevity_months,
+    diet_breadth,
+    pop_density,
+    trophic_level,
+    terrestriality,
+    sex_maturity,
+    wean_age,
+    activity_cycle,
+    range_km2,
+    mid_lat,
+    mid_lng,
+    max_lat,
+    min_lat,
+    max_lng,
+    min_lng,
+    marine,
+    flying
+    ) %>% 
+   arrange(taxo_order,taxo_family,taxo_genus,taxo_species)
+
+```
+
+# Analysis
+
+In this section we will analyze the Pantheria data to thoroughly understand the distribution, completeness, and other properties of the data.
+
+```{r map orders, fig.width=16,fig.height=8}
+
+world <- map_data("world") 
+mapdata <- tinyzoo %>% mutate(order_info = paste(taxo_order,"\n",taxo_order_desc,"\n"))
+
+wmap <- ggplot(world, aes(long, lat)) + 
+  geom_point(size = .1, show.legend = FALSE) +
+  geom_point(data = mapdata, alpha=.7, 
+                                           mapping = aes(
+                                              size = range_km2, 
+                                         x = mid_lng, 
+                                           y = mid_lat, 
+                                           colour = order_info)) +
+  coord_quickmap() +
+  labs(title = "All Orders Geographic Distributions",
+       caption = "Data source: Pantheria")
+ggsave("worldmap.png",plot = wmap,width=16,height=8)
+
+```
+
+![world map](worldmap.png)
+
+
+```{r, fig.width=14,fig.height=12}
+rmap <- ggplot(world, aes(long, lat)) + 
+  geom_point(size = .1, show.legend = FALSE) +
+  geom_point(data = tinyzoo %>% filter(taxo_order %in% c('Afrosoricida','Chiroptera','Primates','Lagomorpha','Rodentia','Carnivora','Proboscidea','Diprotodontia')) %>% mutate(order_info = paste(taxo_order,"\n",taxo_order_desc,"\n")), alpha=.7, 
+                                           mapping = aes(
+                                              size = range_km2, 
+                                         x = mid_lng, 
+                                           y = mid_lat, 
+                                           colour = order_info)) +
+  coord_quickmap() + facet_wrap(taxo_order ~ ., ncol = 2) +
+  labs(title = "Selected Orders Geographic Distributions",
+       caption = "Data source: Pantheria")
+
+ggsave("regionmap.png",plot = rmap,width=14,height=12)
+
+```
+
+![region map](regionmap.png)
+
+This map shows the vast scale of the Pantheria database - it contains data related to thousands of species from all over the world. The dataset contains a latitude/longitude (geocode) for the center point of each species' known range, which have been plotted on these maps. 
+
+Some orders like Diprotodontia (Marsupials) are found only in Australia -  Dermoptera (Flying Lemus) in Indonesia & the Phillipines, Proboscidea (Elephants) in Africa and India & Tubulidentata (Aardvarks) which occur only in Sub Saharan africa. 
+
+On the other hand, some species like Chiroptera (Bats) Carnivora (Meat Eaters), Rodentia (Rats & Mice), and Lagomorpha (Rabbits) are found all over the globe. Cetacea (Whales) and Sirenia (Manatees & Dugongs) have no geocodes or range data recorded, presumably because they are marine mammals.
+
+## Examining Data for Completeness
+
+Now that we've created our "tiny zoo" data set, we will analyze the details, examine the data for completeness, and try to determine what Machine Learning methods would be most appropriate to produce the most accurate predictions. The data used in this project comes from a scientific database which was derived from many sources. 
+
+The original source of each data reference may be found by accessing the metadata link in the references section and finding the corresponding numeric codes. The values provided by Pantheria are already highly reduced and, in some cases, the values are the product of a regression model. The machine learning model we are building already has a lot of the data collection work "baked in" - and we have just one row per species.
+
+```{r missing values, fig.width=12,fig.height=8}
+
+#review how many rows have NA values
+headlen_mm_missing <- sum(is.na(tinyzoo$headlen_mm))
+forearmlen_mm_missing <- sum(is.na(tinyzoo$forearmlen_mm))
+mass_grams_missing <- sum(is.na(tinyzoo$mass_grams))
+litter_size_missing <- sum(is.na(tinyzoo$litter_size))
+litters_peryear_missing <- sum(is.na(tinyzoo$litters_peryear))
+gestation_days_missing <- sum(is.na(tinyzoo$gestation_days))
+longevity_months_missing <- sum(is.na(tinyzoo$longevity_months))
+diet_breadth_missing <- sum(is.na(tinyzoo$diet_breadth))
+pop_density_missing <- sum(is.na(tinyzoo$pop_density))
+trophic_level_missing <- sum(is.na(tinyzoo$trophic_level))
+terrestriality_missing <- sum(is.na(tinyzoo$terrestriality))
+sex_maturity_missing <- sum(is.na(tinyzoo$sex_maturity))
+wean_age_missing <- sum(is.na(tinyzoo$wean_age))
+range_km2_missing <- sum(is.na(tinyzoo$range_km2))
+mid_lat_missing <- sum(is.na(tinyzoo$mid_lat))
+mid_lng_missing <- sum(is.na(tinyzoo$mid_lng))
+
+#prepare data for a heatmap grid
+missingpcts <- tinyzoo %>% 
+  select(-taxo_family,-taxo_genus,-taxo_species,-taxo_binomial, -taxo_class,-taxo_order_desc,-taxo_order_fam,-taxo_order_fam_genus,-taxo_all) %>% 
+  group_by(taxo_order) %>% 
+  summarize_all(.funs = funs('NA' = sum(is.na(.))/n()))
+
+row.names(missingpcts) <- missingpcts$taxo_order
+
+heatmapdata <- missingpcts %>%
+  rownames_to_column() %>%
+  gather(colname, value, -rowname)
+
+r <- 1
+
+#render grid & annotations
+ggplot(heatmapdata, aes(x = rowname, y = colname, alpha = value)) +
+  geom_tile() + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  theme(legend.position="none") +
+  annotate("path",color="red",
+   x=5+r*cos(seq(0,2*pi,length.out=100)),
+   y=5+r*sin(seq(0,2*pi,length.out=100))) +
+  annotate("text",x=10,y=5,color="red",label="Only Chiroptera have forearm length") +
+  annotate("path",color="red",
+   x=4+r*cos(seq(0,2*pi,length.out=100)),
+   y=17+5*sin(seq(0,2*pi,length.out=100))) +
+  annotate("path",color="red",
+   x=27+r*cos(seq(0,2*pi,length.out=100)),
+   y=17+5*sin(seq(0,2*pi,length.out=100))) +
+  annotate("text",x=10,y=20,color="red",label="Cetacea + Sirenia missing geographic fields") +
+  labs(title = "Missing Data by Order",
+       caption = "Data source: Pantheria")
+```
+
+The dataset contains `r totalrows ` total rows with columns containing the following data points:
+
+Commonly recorded attributes:
+
+* headlen_mm - Head & body length in mm
+* mass_grams - Mass in grams
+* litter_size  - Number of offspring per litter
+* litters_peryear  - Number of litters per pear
+* gestation_days  - Length of gestational period in days
+* longevity_months  - Lifespan in months
+* diet_breadth  - Number of types of food sources
+* pop_density   - Number of individuals per square km
+* trophic_level - Level in the food chain
+* sex_maturity  - Days to maturity
+* wean_age  - Days to weaning
+* activity cycle  - Diurnal (active during the day) / Nocturnal (active at night) etc.
+
+Chiroptera (Bats) only:
+
+* forearmlen_mm  - Length of forearm (wing) - a key indicator in bats
+      
+Land dwellers only have geo coordinates & terrestriality:
+
+* terrestriality - Above ground/under ground dwelling
+* min_lat - minimum latitude
+* max_lat - maximum latitude
+* min_lng - minimum longitude
+* max_lng - maximum longitude
+* mid_lat - mid range latitude
+* mid_lng - mid range longitude
+* range_km2 - mid range longitude
+
+The column with the fewest missing entries is body mass. Aside from the geocodes and forearm length, the column with the most missing entries is population density. 
+
+The patterns of missingness may be influenced by differences in the data collection processes for various traits. It is probably easier to ascertain certain physical values like mass (which can be measured fairly instantly) vs something like population density or longevity - which requires observation of a group, long periods of time, or complex studies to observe and record. 
+
+It also makes sense that certain characteristics would not be as widely recorded for orders where it is not easily measured or not as useful, or not applicable. In particuler - flying mammals Chiroptera (Bats) and marine mammals - Cetacea (Whales) and Sirenia (Manatees & Dugongs) have some key differences in which columns are commonly recorded.
+
+```{r complete rows, warning=FALSE,fig.width=12,fig.height=8}
+#review how many rows have ALL nonnegative values
+#this would limit the number of possible matches if we use a complete case apporoach
+complete_rows <- tinyzoo %>% filter(
+     headlen_mm > 0 & 
+     mass_grams > 0 & 
+     activity_cycle > 0 & 
+     litter_size > 0 & 
+     litters_peryear > 0 & 
+     gestation_days > 0 &
+     longevity_months > 0 & 
+     diet_breadth > 0 & 
+     pop_density > 0 & 
+     trophic_level > 0 &
+     sex_maturity > 0 &
+     wean_age > 0 
+     )
+complete_count <- nrow(complete_rows)
+
+```
+
+Only `r complete_count` species have all 12 common characteristics recorded.  Considering the relatively small number of _complete rows_ in the Pantheria data, a _complete case analysis_ would be of limited use. This approach could only incorporate a small fraction of the total observations, and the number of possible outcome classifications would include very few outcomes. This method would also require more complete data to be provided to make a prediction.
+
+```{r empty rows, warning=FALSE,fig.width=12,fig.height=8}
+#find rows that have no predictor values
+empty_rows <- tinyzoo %>% filter(
+      is.na(headlen_mm) & 
+      is.na(mass_grams) & 
+      is.na(litter_size) & 
+      is.na(litters_peryear) & 
+      is.na(gestation_days) &
+      is.na(longevity_months) & 
+      is.na(diet_breadth) & 
+      is.na(trophic_level) &
+      is.na(pop_density) &
+      is.na(sex_maturity) &
+      is.na(wean_age) &
+      is.na(activity_cycle) 
+     
+)
+#record number of empty rows
+empty_count <- nrow(empty_rows)
+```
+
+We will remove any rows that are missing all of the 12 common predictors. The original dataset contains `r empty_count ` empty rows that will be removed.
+
+```{r}
+
+#remove empty rows from tinyzoo
+tinyzoo <- tinyzoo %>% anti_join(empty_rows,by="taxo_binomial")
+tinyzoo$taxo_order <- factor(tinyzoo$taxo_order) 
+tinyzoo$taxo_order <- droplevels(tinyzoo$taxo_order)
+
+```
+
+Now we will examine the pattern of missingness - are most rows missing the same columns? 
+
+```{r mice, message=FALSE,warning=FALSE,echo=FALSE,fig.width=6,fig.height=9}
+library(mice)
+
+#make a dataframe with just the predictors
+predictors_only <- tinyzoo %>% select(
+     headlen_mm, 
+     forearmlen_mm, 
+     mass_grams, 
+     litter_size, 
+     litters_peryear, 
+     gestation_days,
+     longevity_months,
+     diet_breadth, 
+     pop_density, 
+     trophic_level,
+     terrestriality,
+     sex_maturity,
+     wean_age,
+     activity_cycle,
+     range_km2,
+     mid_lat,
+     mid_lng
+    )
+
+
+##Inspect missingness of first 100 rows in the training adata
+missing <- md.pattern(predictors_only %>% sample_n(100),rotate.names=TRUE,plot=TRUE) 
+#missing
+
+#missingness <- md.pattern(predictors_only,rotate.names=TRUE,plot=FALSE) 
+#missingness
+
+```
+
+Selecting just 100 random rows, there are many missing values (red), and many different patterns of completeness (blue) in data. The number on the left is the number of rows with that pattern of missingness. The number on the right is how many columns are missing. 
+
+Rather than omitting observations with missing data, we will attempt to either replace NA values with other values using various imputation strategies, or to shape a model which trains using only the available data columns. Values may be replaced with a 0 or an estimated value.
+
+Since taxonomical classification attempts to group similar organisms, it should be reasonable to assume that a particular species characteristics (if missing) could be imputed based on an average of other species in the same genus, family, or order. Imputation of missing values could improve the number of possible outcomes by simulating data points that were not recorded for any individual species within a given taxa. We will experiment with how well the system performs with various imputation methods applied.
+
+## Examining Species Counts
+
+The charts below will examine the count, distribution and ranges of values in our data.  In this section we will consider the number of species per order.
+
+```{r examine order data points, fig.width=12,fig.height=6}
+plot_ord <- tinyzoo %>% 
+  group_by(taxo_order) %>% 
+  dplyr::summarize(group_count =  n()) %>% 
+  ggplot(aes(x=taxo_order,y=group_count, fill=taxo_order)) + 
+  geom_col() + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  theme(legend.position="none") +
+  labs(title = "Number of Species per Order",
+       caption = "Data source: Pantheria")
+plot_ord
+```
+
+
+```{r, fig.width=12,fig.height=12}
+all_ord <- tinyzoo %>% group_by(taxo_order) %>% 
+  dplyr::summarize(group_count =  n()) 
+
+median_group_count <- median(all_ord$group_count)
+
+minority_ord <- tinyzoo %>% group_by(taxo_order) %>% 
+  dplyr::summarize(group_count =  n()) %>% 
+  filter(group_count < median_group_count) 
+
+minority_groups <- nrow(minority_ord)
+
+```
+
+The median species count is `r median_group_count` species per order. We will consider any groups with fewer than the median group count, to be minority classes. This will be the basis for oversampling the training set. Of 29 orders in the data, `r minority_groups` could be considered minority groups.
+
+We are now performing the same analysis as above, but at the family level. Since there are so many outcomes, we will need to filter this chart to a subset of orders. We will just examine the 3 largest orders - Rodentia, Chiroptera and Primates. 
+
+```{r examine family, fig.width=16,fig.height=6}
+#create families plot
+plot_fam <- tinyzoo %>% filter(taxo_order %in% c('Rodentia','Chiroptera','Primates')) %>%
+  group_by(taxo_order, taxo_order_fam) %>% 
+  dplyr::summarize(group_count =  n()) %>% 
+  ggplot(aes(x=taxo_order_fam,y=group_count, fill=taxo_order)) + 
+  geom_col() + 
+  facet_wrap(taxo_order ~ ., scales = "free") + 
+  theme(axis.text.x = element_text(size=8, angle = 90, vjust = 0.5, hjust=1)) +
+  theme(legend.position="none") +
+  labs(title = "Number of Species per Family - Orders: Chiroptera, Primates, Rodentia",
+       caption = "Data source: Pantheria")
+plot_fam
+```
+
+Clearly the classes are very imbalanced. Some have one or two species, and others have hundreds.
+
+```{r examine family 3, fig.width=12,fig.height=12}
+#table of group counts
+all_fam <- tinyzoo %>% 
+  group_by(taxo_order_fam) %>% 
+  dplyr::summarize(group_count =  n()) 
+
+#med group count
+median_fam_count <- median(all_fam$group_count)
+
+#select minority classes
+minority_fam <- tinyzoo %>% 
+  group_by(taxo_order_fam) %>% 
+  dplyr::summarize(group_count =  n()) %>% 
+  filter(group_count < median_fam_count) %>% 
+  mutate(minority = TRUE) %>% 
+  ungroup()
+
+
+```
+
+The median number of families per order across all species is: `r median_fam_count`. We may also use this detail as the basis for some imputation strategies to be explored later in this report.
+
+We are now performing the same analysis as above, but at the genus level. 
+
+```{r examine family 2, fig.width=16,fig.height=6}
+#create families plot
+plot_fam <- tinyzoo %>% filter(taxo_order == 'Chiroptera' & taxo_family == 'Vespertilionidae') %>%
+  group_by(taxo_order, taxo_genus) %>% 
+  dplyr::summarize(group_count =  n()) %>% 
+  ggplot(aes(x=taxo_genus,y=group_count, fill=taxo_genus)) + 
+  geom_col() + 
+  facet_wrap(taxo_order ~ ., scales = "free") + 
+  theme(axis.text.x = element_text(size=8, angle = 90, vjust = 0.5, hjust=1)) +
+  theme(legend.position="none") +
+  labs(title = "Number of Species per Genus - Order: Chiroptera - Family: Vespertilionidae",
+       caption = "Data source: Pantheria")
+plot_fam
+```
+
+Once again we can see that there is significant imbalance in the number of genus groups per family.
+
+## Visualization of Trait Distributions
+
+In the following plots we will examine the taxonomic data to visualize how the distributions vary between each order. First we will examine some of the raw data, to make sure the values agree with general knowledge.
+
+```{r getminmax, warning=FALSE, message=FALSE,  fig.width=12,fig.height=8}
+
+#getminmax function to compare species with min/max values for a given metric
+getminmax <- function(data, col) {
+  
+  topspecies <- data %>% 
+    arrange(desc(!!sym(col))) %>% 
+    slice(1:1) %>% 
+    mutate(species_binom = paste(taxo_genus,taxo_species)) %>% 
+    pull(species_binom)
+  
+  botspecies <- data %>% 
+    arrange(!!sym(col)) %>% 
+    slice(1:1) %>% 
+    mutate(species_binom = paste(taxo_genus,taxo_species)) %>% 
+    pull(species_binom)
+  
+  topstat <- data %>% 
+    arrange(desc(!!sym(col))) %>% 
+    slice(1:1) %>% 
+    mutate(species_binom = paste(taxo_genus,taxo_species)) %>% 
+    pull(sym(col))
+  
+  botstat <- data %>% 
+    arrange(!!sym(col)) %>% 
+    slice(1:1) %>% 
+    mutate(species_binom = paste(taxo_genus,taxo_species)) %>% 
+    pull(sym(col))
+
+  checkrow <- data.frame(
+                      stat=col,
+                      #maxspecies=topspecies,
+                      maxspecies_vernacular=getvernacularname(topspecies),
+                      maxstat=topstat,
+                      #minspecies=botspecies,
+                      minspecies_vernacular=getvernacularname(botspecies),
+                      minstat=botstat
+                   )
+   
+  checkrow
+}
+
+
+spectable <- data.frame()
+
+checkrow <- getminmax(tinyzoo,c("mass_grams"))
+spectable <- spectable %>% bind_rows(checkrow)
+
+checkrow <- getminmax(tinyzoo,c("headlen_mm"))
+spectable <- spectable %>% bind_rows(checkrow)
+
+checkrow <- getminmax(tinyzoo %>% filter(flying == 1),c("forearmlen_mm"))
+spectable <- spectable %>% bind_rows(checkrow)
+
+checkrow <- getminmax(tinyzoo,c("litter_size"))
+spectable <- spectable %>% bind_rows(checkrow)
+
+checkrow <- getminmax(tinyzoo,c("litters_peryear"))
+spectable <- spectable %>% bind_rows(checkrow)
+
+checkrow <- getminmax(tinyzoo,c("longevity_months"))
+spectable <- spectable %>% bind_rows(checkrow)
+
+checkrow <- getminmax(tinyzoo,c("gestation_days"))
+spectable <- spectable %>% bind_rows(checkrow)
+
+checkrow <- getminmax(tinyzoo,c("wean_age"))
+spectable <- spectable %>% bind_rows(checkrow)
+
+checkrow <- getminmax(tinyzoo,c("pop_density"))
+spectable <- spectable %>% bind_rows(checkrow)
+
+checkrow <- getminmax(tinyzoo,c("trophic_level"))
+spectable <- spectable %>% bind_rows(checkrow)
+
+checkrow <- getminmax(tinyzoo,c("terrestriality"))
+spectable <- spectable %>% bind_rows(checkrow)
+
+checkrow <- getminmax(tinyzoo,c("diet_breadth"))
+spectable <- spectable %>% bind_rows(checkrow)
+
+checkrow <- getminmax(tinyzoo,c("activity_cycle"))
+spectable <- spectable %>% bind_rows(checkrow)
+
+checkrow <- getminmax(tinyzoo,c("range_km2"))
+spectable <- spectable %>% bind_rows(checkrow)
+
+checkrow <- getminmax(tinyzoo,c("mid_lat"))
+spectable <- spectable %>% bind_rows(checkrow)
+
+
+
+spectable  %>% knitr::kable()
+
+```
+
+The table above examines the data based on the minimum and maximum of each variable. Most of the details in the the table seem to agree with general knowledge. Mass and head size reveal the huge Blue whale vs. tiny, lightweight  Bumblebee Bats. Examining Litter Size, Litters per year, Gestation, and Weaning age - Large mammals including Elephants and Sperm Whales, which reproduce infrequent small litters (K-selected species) appear opposite diminuitive Mice, Tenrec, and Echidnas (r-selected species) which are much more prolific in reproductive frequency. Chimpanzees are another K-selected species with a long weaning age vs. the very fast reproducing Viscacha, that wean their young for a very short period. Population density statistics indicate the Hooded Seal as the most solitary vs highly communal Water Voles. 
+
+The following box plots and scatter plots show considerable diversity in the distributions, types, and ranges of the various data points for each taxonomical _order_.  There are 29 orders represented in our dataset. The box plots indicate the inter-quartile ranges of each "creature feature" including continuous-valued variables like mass & head size, as well as discrete-valued variables like terrestriality, diet breadth, and activity cycle.  The aim of a machine learning model would be to find patterns in these features that are predictive in a way that's useful.
+
+In general - determing the taxonomical order is not terribly difficult - For example - sharp canine teeth mark Carnivora. Flying mammals are Chiroptera. Hooved animals with even number of toes are always perissodactyla. A classification tool determining orders may be of limited value - though it could be useful in some cases where two orders may contain similar species. For example, Scandentia, Soricomorpha, Paucituberculata, Macroscelidea all contain shrews. So we might expect to see more confusion between these similar orders.
+
+```{r viz orders, fig.width=12,fig.height=12}
+# Plot distribution of each predictor stratified by order
+tinyzoolog <- tinyzoo %>% mutate(mass_grams_log10 = log10(mass_grams),
+                         headlen_mm_log10 = log10(headlen_mm),
+                         pop_density_log10 = log10(pop_density))
+
+#create some log10 transforms
+tinyzoolog %>% gather(varz, length, 
+                mass_grams_log10,
+                headlen_mm_log10,
+                litter_size,
+                litters_peryear,
+                gestation_days,
+                longevity_months,
+                diet_breadth,
+                pop_density_log10,
+                trophic_level,
+                terrestriality,
+                sex_maturity,
+                wean_age,
+                 activity_cycle,
+     range_km2,
+     mid_lat,
+     mid_lng
+                ) %>%
+  ggplot(aes(paste(taxo_order), 
+             length, 
+             fill = paste(taxo_order))) +
+  geom_boxplot() +
+  facet_wrap(~varz, scales = "free", ncol=2) +
+  theme(axis.text.x = element_blank()) +
+  theme(legend.position="bottom",axis.text.x = element_blank())  + 
+  labs(title = "Distributions of Physical, Behavioral and Reproductive Characteristics", subtitle = "Distribution of median observed values for each species grouped by order", caption = "Data source: Pantheria")
+
+```
+
+The difference between Families are much more specific, and can be used to differentiate more similar species. We will examine some characteristics of families within the largest order, Rodentia.
+
+```{r viz families, fig.width=12,fig.height=12}
+# Plot distribution of each predictor stratified by family
+tinyzoolog %>% filter(taxo_order == 'Rodentia') %>% gather(varz, length, 
+                mass_grams_log10,
+                headlen_mm_log10,
+                litter_size,
+                litters_peryear,
+                gestation_days,
+                longevity_months,
+                diet_breadth,
+                pop_density_log10,
+                trophic_level,
+                terrestriality,
+                sex_maturity,
+                wean_age,  
+                activity_cycle,
+     range_km2,
+     mid_lat,
+     mid_lng) %>%
+  ggplot(aes(paste(taxo_family), 
+             length, 
+             fill = paste(taxo_family))) +
+  geom_boxplot() +
+  facet_wrap(~varz, scales = "free", ncol=2) +
+  theme(legend.position="bottom",axis.text.x = element_blank()) + 
+  labs(title = "Distributions of Physical, Behavioral and Reproductive Characteristics - Order: Rodentia", subtitle = "Distribution of median observed values for each species grouped by family", caption = "Data source: Pantheria")
+
+```
+
+Predicting the family correctly could be more helpful in distinguishing fairly similar species - for example voles (Cricetidae), Rats (Muridae), and Gophers (Geomyidae) are all similar families in order Rodentia. 
+
+```{r viz genus, fig.width=12,fig.height=12}
+# Plot distribution of each predictor stratified by family
+tinyzoolog %>% filter(taxo_order == 'Rodentia' & taxo_family == 'Sciuridae') %>% gather(varz, length, 
+                mass_grams_log10,
+                headlen_mm_log10,
+                litter_size,
+                litters_peryear,
+                gestation_days,
+                longevity_months,
+                diet_breadth,
+                pop_density_log10,
+                trophic_level,
+                terrestriality,
+                sex_maturity,
+                wean_age,  
+                activity_cycle,
+     range_km2,
+     mid_lat,
+     mid_lng) %>%
+  ggplot(aes(paste(taxo_genus), 
+             length, 
+             fill = paste(taxo_genus))) +
+  geom_boxplot() +
+  facet_wrap(~varz, scales = "free", ncol=2) +
+  theme(legend.position="bottom",axis.text.x = element_blank()) + 
+  labs(title = "Distributions of Physical, Behavioral and Reproductive Characteristics - Order: Rodentia, Family:  Sciuridae", subtitle = "Distribution of median observed values for each species grouped by genus", caption = "Data source: Pantheria")
+
+```
+
+And finally, looking at one family of Rodents - we can see that the data becomes more sparse at the genus level, with many columns containing a lot of missing data. There also appear to be many genus's that have only one recording as indicated by a horizontal bar. So the genus is probably the most specific level that would be practical to predict in a machine learning context.
+
+These charts suggest that a recursive model might be practical - where the first model will train on all data to predict the order, then retrain once an order has been predicted with data that only includes the families in that order. Orders with more complete data will produce more accurate results when recursed. The charts below visualize some of the most highly correlated variables and how their distributions are grouped at the order level.
+
+
+## Examining Correlations
+
+Now we will can how closely the various predictors are correlated.
+
+```{r examine correlations, fig.width=12,fig.height=8}
+library(corrr)
+library(gridExtra)
+library(grid)
+
+#create a dataset with just the predictors
+tzvars <- tinyzoo %>% select(mass_grams,headlen_mm,litter_size,litters_peryear,gestation_days,wean_age,sex_maturity,longevity_months,pop_density,diet_breadth,terrestriality,trophic_level,activity_cycle,range_km2,mid_lat,mid_lng)
+
+cor_tbl <- corrr::correlate(tzvars)
+
+cor_tbl
+```
+
+This table demonstrates that there are strong correlations between certain sets of values: 
+
+* Longevity and sex maturity: 78%
+* Mass and head length: 76%
+* Weaning age and sex maturity: 74%
+* Sex maturity and gestation days: 72%
+* Longevity and gestation days: 70%
+* Longevity and head length: 67%
+* Weaning age and gestation days: 55%
+* Litter size and gestation days: -55%
+
+These correlations suggest that some fields may be candidates for use of linear regression to impute some missing values. 
+
+```{r getpointplot, fig.width=12,fig.height=16}
+
+getpointplot <- function(data, col1, col2, colgroup, loglist, opac, desc) {
+ hull <- data %>%
+  filter(!is.na(!!sym(col1)) & !is.na(!!sym(col2))) %>%  
+  mutate(loggroup = round(log10(!!sym(col1)))) %>%  
+  filter(loggroup %in% loglist) %>%  
+  group_by(!!sym(colgroup)) %>%
+  slice(chull(!!sym(col1), !!sym(col2)))
+  
+ center <- data %>%
+  filter(!is.na(!!sym(col1)) & !is.na(!!sym(col2))) %>%  
+  mutate(loggroup = round(log10(!!sym(col1)))) %>%  
+  filter(loggroup %in% loglist) %>%  
+  group_by(!!sym(colgroup)) %>%
+  summarize(avgx = mean(!!sym(col1)),avgy = mean(!!sym(col2)))
+ 
+   p1 <- data %>% 
+  filter(!is.na(!!sym(col1)) & !is.na(!!sym(col2))) %>%  
+  mutate(loggroup = round(log10(!!sym(col1)))) %>%  
+  filter(loggroup %in% loglist) %>%  
+  ggplot(aes(!!sym(col1), !!sym(col2), color = !!sym(colgroup), fill = !!sym(colgroup))) + 
+  geom_point()  + 
+  geom_polygon(data = hull, alpha = opac) + 
+  geom_label(data = center, aes(x=avgx,y=avgy,label=!!sym(colgroup)),fill='#FFFFFF')  + 
+ #facet_wrap(~loggroup, scales = "free",ncol=2) +
+  theme(legend.position="none") + 
+  labs(title = paste("Correlated Characteristics: ",col1," and ",col2), 
+       subtitle = paste("Distribution of median observed values: ",desc), 
+       caption = "Data source: Pantheria")
+
+   
+     p1
+  
+  
+  
+}
+
+#reproductive characteristics
+p1 <- getpointplot(tinyzoo,'sex_maturity','wean_age','taxo_order_desc', c(1),0.05,"Very Fast Maturity")
+p2 <- getpointplot(tinyzoo,'sex_maturity','wean_age','taxo_order_desc', c(2),0.05,"Fast Maturity")
+p3 <- getpointplot(tinyzoo,'sex_maturity','wean_age','taxo_order_desc', c(3),0.05,"Average Maturity")
+p4 <- getpointplot(tinyzoo,'sex_maturity','wean_age','taxo_order_desc', c(4),0.05,"Slow Maturity")
+grid.arrange(p1, p2, p3, p4,nrow = 2)
+
+#physical characteristics
+p1 <- getpointplot(tinyzoo,'mass_grams','headlen_mm','taxo_order_desc', c(1,2),0.05,"Small species")
+p2 <- getpointplot(tinyzoo,'mass_grams','headlen_mm','taxo_order_desc', c(3,4),0.05,"Medium species")
+p3 <- getpointplot(tinyzoo,'mass_grams','headlen_mm','taxo_order_desc', c(5,6),0.05,"Large species")
+p4 <- getpointplot(tinyzoo,'mass_grams','headlen_mm','taxo_order_desc', c(7,8),0.05,"Very Large species")
+grid.arrange(p1, p2, p3, p4, nrow = 2)
+
+
+
+
+  
+```
+
+Examining the most highly correlated values reveals that there are some patterns of distribution between orders and families, but there is also significant overlap. Many areas appear where the distribution of different classes are intermingled. Based on this analysis, a classification tree or random forest approach shoud be useful in finding the important predictive variables to locate splits and isolate areas where groupings exist.
+
+# Model Construction
+
+In this section we will begin constructing and testing models. The first approach will be use a Classification and Regression Tree (CART). We will assess the accuracy values of the CART, and then examine how a random forest model may improve the accuracy. In the following section we create a "final" tables of data which has ONLY the class/factor columns, and the various predictors. We will create a set with 0's imputed, with NA's and one with MEAN imputation.
+
+```{r rpart, fig.width=12,fig.height=12}
+library(rpart)
+library(caret)
+#reduce the data to the predictor fields that will be used in the models
+tzNA_pred_species <- tinyzoo %>% select(
+              taxo_species,
+              taxo_genus,
+              taxo_order,
+              taxo_family, 
+              mass_grams,
+              forearmlen_mm,
+              headlen_mm,
+              litter_size,
+              litters_peryear,
+              gestation_days,
+              longevity_months,
+              diet_breadth,
+              pop_density,
+              trophic_level,
+              terrestriality,
+              sex_maturity,
+              wean_age,
+              activity_cycle,
+              range_km2,
+              mid_lat,
+              mid_lng
+                ) %>% mutate(taxo_species = as.factor(taxo_species),
+                             taxo_genus = as.factor(taxo_genus),
+                             taxo_order = as.factor(taxo_order),
+                             taxo_family = as.factor(taxo_family))
+
+
+
+
+
+```
+
+To create a test and training data set that have the same classes represented, we will have to stratify the data by order, then select a portion to of each order for training, and the rest for testing. To maximize the number of observations and to ensure a fair number of challenges - we will start by splitting the data into 50% test and 50% training data for each order. The splitstackshape package enables stratified selection of random data points to create a hold-out data set that would contain a large variety of classes to challenge the machine learning model.
+
+## Assessing the Model Scores
+
+The following key metrics relate to the predictions we are making: 
+
+* Sensitivity - True Positives - how often the model predicts the right order/family
+* Specificity - True Negatives - how often the model avoids predicting this class incorrectly
+* Precision: True Positives / True Positives + False Positives
+* Recall: True Positives / True Positives + False Negatives
+* F1 Score:  2 * ((Precision * Recall) / (Precision + Recall))
+
+So our goal will be do accomplish several objectives - to *increase the number of columns with 1 or more predictions*, to improve the *Overall Accuracy* of the model; to achieve a good average *F1 score* for those classes which were predicted, balancing precision and recall across all predicted classes. Several function will be set up to analyze and assess the results. For each iteration in the model construction, we will create a grid-style heatmap plot for the confusion matrix and run a function to measure accuracy and other key metrics we defined.
+
+```{r functionlibrary}
+#this function will build a visualization grid plot of the confusion matrix that we will use for analysis of each model.
+#Note: this chart sample was adapted from a stackoverflow post.
+getcmplot <- function(cm,name,subtitle='') {
+ 
+cm_tbl <- data.frame(cm$table)
+
+# add mutations to the CM visulaization
+plot_tbl <- cm_tbl %>%
+  mutate(goodbad = ifelse(cm_tbl$Prediction == cm_tbl$Reference, "good", "bad")) %>%
+  group_by(Reference) %>%
+  mutate(prop = ifelse(Freq+sum(Freq)>1,Freq/sum(Freq),0) )
+
+# fill alpha relative to sensitivity/specificity by proportional outcomes within reference groups (see dplyr code above as well as original confusion matrix for comparison)
+ggplot(data = plot_tbl, mapping = aes(x = Reference, y = Prediction, fill = goodbad, alpha = prop)) +
+  geom_tile() +
+  geom_text(aes(label = ifelse(Freq > 0, Freq, "")), vjust = .5, fontface  = "bold", alpha = 1) +
+  scale_fill_manual(values = c(good = "green", bad = "red")) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  xlim(rev(levels(plot_tbl$Reference))) + 
+  labs(title = paste("Confusion Matrix: ",name), 
+       subtitle = subtitle, 
+       caption = "Data source: Pantheria")
+  
+  
+}
+
+#this function will measure the accuracy, mean F1 score and number of class predictions made
+measuremodel <- function(cm,name,ds,level){
+overall_accuracy <- cm$overall["Accuracy"]  
+orders_predicted <- 0
+xsum <- 0
+xrows <- seq(from = 1, to = nrow(cm$byClass), by = 1)
+for (x in xrows){
+  if(!is.na(cm$byClass[x,7])){
+    xsum <- xsum + cm$byClass[x,7]
+    orders_predicted <- orders_predicted + 1
+  }
+}
+F1_mean <- xsum/orders_predicted
+
+results_df <- data.frame(
+model=name,
+dataset=ds,
+Predicted=orders_predicted,
+Accuracy=mean(overall_accuracy),
+F1_Mean=F1_mean)
+
+results_df
+}
+
+
+```
+
+## Create Data Partitions
+
+We are splitting the test and training data using the stratified method so there are some samples of the same orders in both test and training data sets.
+
+```{r partitions}
+##--------------------------------------
+
+createstratifiedpartitions <- function(dataset,groupedby,pct,setseed){
+
+  set.seed(setseed)
+
+  # Take a 50% sample from all -A- groups in DF
+  z_strat <- stratified(dataset, groupedby, pct, bothSets = TRUE)
+  
+  #retrieve the two sets
+  z_train <- z_strat$SAMP1
+  z_temp <- z_strat$SAMP2
+  
+  # Make sure vals in validation set are also in training set
+  z_test <- z_temp %>%
+  semi_join(z_train,
+            by=groupedby)
+
+  # Add rows removed from validation set back into main set
+  z_removed <- anti_join(z_temp, z_test)
+  z_train <- rbind(z_train, z_removed)
+
+  
+  returnobj <-list(
+                  strat=z_strat,          
+                  trainDS=z_train,
+                  testDS=z_test
+                  )
+
+
+  class(returnobj) <- "resulttable"
+  returnobj
+
+}
+
+#first stratify into a 10% holdout for validating the model 
+#this will try to populate as many different genuses in the validaton data as possible.
+tzNA_species_holdout <- createstratifiedpartitions(tzNA_pred_species, "taxo_genus", .9,1)
+
+#take the other 90% and split that into a 80% training/20% test partition
+tzNA_species_working <- tzNA_species_holdout$trainDS
+
+#create a dataset of 20% of the working partition
+tzNA_order_parts <- createstratifiedpartitions(tzNA_species_working, "taxo_order", .8,1)
+
+#set some variables for display
+originalrows <- nrow(tzNA_pred_species)
+
+holdoutrows <- nrow(tzNA_species_holdout$testDS)
+trainingrows <- nrow(tzNA_species_holdout$trainDS)
+
+trainingfold <- nrow(tzNA_order_parts$trainDS)
+testfold <- nrow(tzNA_order_parts$testDS)
+
+count_orders <- nrow(tzNA_order_parts$testDS %>% group_by(taxo_order) %>% summarize(group_count = n()))
+
+```
+
+The partition has taken the original data table of `r originalrows` original rows and reserved a hold-out of `r holdoutrows` to assess the final model score. The remaining `r trainingrows` rows have been further partitioned into a set of `r trainingfold` training rows and `r testfold` test rows to use for the model construction and tuning process. There are `r count_orders` taxonomical orders present in the test data. The hold-out validation data represents unknown information - we will not use this data for any other purpose except to test the performance of the final model.
+
+## Complete Case Analysis vs. Available Case Analysis
+
+We can limit the decision tree to rows containing a *complete* set of predictors, dropping all rows that have any missing values. This would be termed complete case analysis. This method is used in a random forest model if NA values are encountered in the training data. Complete case analysis may provide the greatest overall accuracy, since it uses the greatest number of predictors and requires all outcomes to have training observations matching all predictors. But it will not be able to produce predictions for every row of test data.
+
+Another option would be to use only training rows with data in all the same columns as the test data. This would require that different models be created to accept varying numbers and combinations of predictors available. In these cases, only *available* predictors (those columns provided in the test set) would be utilized in training the model. This would be a more complex model which would adapt to missing observations by running a custom model for each combination of available data columns. The final "advanced model" will use this method.
+
+## Baseline Model
+
+As explained already - a model that predicts the order is not super useful. Also, there are a few orders which contain the majority of species - so you could simply predict one of these and be right most of the time. So we have established some criteria beyond just accuracy. 
+
+To demonstrate how accurate a model would be that predict the most common classes - the following code will apply a prediction of Rodentia on every mammal and we will see how well it scores. This would be similar to a naive Bayes approach if the outcomes were continuous values. Since the outcomes are discreet - we will use the most common class as the prediction.
+
+```{r baseline}
+#we will start with the tzNA table, on the order level
+tz_train <- tzNA_order_parts$trainDS
+tz_test <- tzNA_order_parts$testDS
+##--------------------------------------
+predictions <- rep(as.factor('Rodentia'), nrow(tz_test))
+
+tz_actual <- tz_test %>% mutate(taxo_order = as.factor(droplevels(taxo_order))) %>% 
+  pull(taxo_order)
+
+#get a confusion matrrix with the predictions vs actuals
+cm <- confusionMatrix(data=predictions,reference=tz_actual)
+
+measure_df0 <- measuremodel(cm,"1- Baseline","With 0's","Order")
+measure_df_all <- measure_df0
+measure_df_all %>% knitr::kable()
+
+```
+
+## Reading the Confusion Matrix Visualization Grid
+
+The chart below visualizes the confusion matrix. A number in any cell other than a green cell, indicates a wrong guess and a number in a green cell is a correct guess. The reference or correct classes are listed on the y axis and the predictions made for each reference class are listed horizontally along the x axis. Annotations have been added on some of the confusion matrix visuals to call out specific data points or assist the reader in understanding how to read these charts. 
+
+```{r check results 1 cm, fig.width=16,fig.height=16}
+
+r = .8
+cmplot <- getcmplot(cm,"Baseline") 
+cmplot + annotate("path",color="blue",
+   x=14+ r*cos(seq(0,2*pi,length.out=100)),
+   y=22+ r*sin(seq(0,2*pi,length.out=100))) +
+  annotate("text",x=14,y=21,color="blue",label="Lagomorpha being incorrectly classified as Rodentia")  + 
+   annotate("path",color="blue",
+   x=4+ r*cos(seq(0,2*pi,length.out=100)),
+   y=22+ r*sin(seq(0,2*pi,length.out=100))) +
+  annotate("text",x=4,y=21,color="blue",label="Rodentia being correctly classified") 
+```
+
+This approach is obviously not a great choice, unless you think every Mammal is a Rat! But you can see that we would be right almost 40% of the time if you always predict this one majority class. We will call 40% our threshold value or baseline. Now that we have established a baseline, we will build some more useful models and see if we can predict with greater than 40% accuracy at the order level. 
+
+## Classification Tree with NA's
+
+The test set contains most of the 29 orders in the training set. We'll start with a simple classification tree model. 
+
+```{r CART model}
+#we will start with the tzNA table, on the order level
+tz_train <- tzNA_order_parts$trainDS
+tz_test <- tzNA_order_parts$testDS
+
+```
+
+The RPart package provides features to visualize how the tree splits on each variable. 
+
+```{r fit order}
+##--------------------------------------
+#override rparts complexity parameter to -1 to demonstrate an unpruned tree
+tz_train <- tz_train %>% select(-taxo_family,-taxo_genus,-taxo_species)
+
+fit_order <- rpart(taxo_order ~ .,
+                   data = tz_train,
+                   minsplit = 2,
+                   minbucket = 1,
+                   maxdepth =8,
+                   cp = -1,
+                   method = "class")
+
+```
+
+The model has been trained, now we will apply a prediction using test data. This will take the test data set, remove the order column, and get a prediction based on the remaining columns.
+
+```{r predict with rpart, fig.width=8,fig.height=10}
+##--------------------------------------
+#prx is teh prediction model
+prx <- predict(object=fit_order,tz_test[-1],type="class")
+
+#this is th actual orders extracted from the test set we just got predictions for
+tz_actual <- tz_test %>% mutate(taxo_order = as.factor(taxo_order)) %>% pull(taxo_order)
+
+#get a confusion matrrix with the predictions vs actuals
+cm <- confusionMatrix(data=prx,reference=tz_actual)
+
+measure_df1 <- measuremodel(cm,"2- RPART Classification Tree","With 0's","Order")
+measure_df_all <- measure_df_all %>% bind_rows(measure_df1)
+measure_df_all %>% knitr::kable()
+```
+
+This CART results in about 70% accuracy. This is pretty good for a single decision tree - but this decision tree is overly complex and overtraining. It would need to be pruned to be more flexible.
+
+```{r check results 2 cm, fig.width=16,fig.height=16}
+cmplot <- getcmplot(cm,"RPart - Classification Tree - Unpruned")
+cmplot + 
+  annotate("path",color="blue",
+   x=17+ r*cos(seq(0,2*pi,length.out=100)),
+   y=25+ r*sin(seq(0,2*pi,length.out=100))) +
+  annotate("text",x=17,y=24,color="blue",label="Lagomorpha being incorrectly classified as Rodentia")  + 
+   
+  annotate("path",color="blue",
+   x=17+ r*cos(seq(0,2*pi,length.out=100)),
+   y=13+ r*sin(seq(0,2*pi,length.out=100))) +
+  
+  annotate("text",x=17,y=12,color="blue",label="Lagomorpha being correctly classified")  + 
+  
+  annotate("path",color="blue",
+   x=5+ r*cos(seq(0,2*pi,length.out=100)),
+   y=25+ r*sin(seq(0,2*pi,length.out=100))) +
+  annotate("text",x=4,y=24,color="blue",label="Rodentia being correctly classified") 
+```
+
+
+```{r plot rpart decisions, fig.width=20,fig.height=20}
+##--------------------------------------
+# use rpart to improve display
+
+rpart.plot(fit_order, 
+           box.palette="RdBu", 
+           shadow.col="gray", 
+           extra = 2, 
+           fallen.leaves= FALSE, 
+           cex = .5,
+           Margin=.1, 
+           legend.x = -0.15, 
+           legend.y = 1,
+           compress=FALSE,
+           main="Unpruned Tree Diagram - Too Complex")
+```
+
+The unpruned classification tree is very complex, and many orders are excluded. This plot demonstrates one challenge of using decision trees with sparse data over many outcomes. The classification above could be considered over-fitted. It is too complex and the number of splits is too great. It's going to match the training data very closely.  Pruning the tree could reduce complexity to a more practical level to make the model more robust. 
+
+```{r}
+plotcp(fit_order)
+```
+
+According to the RPart documentation for the plotcp feature "A good choice of cp for pruning is often the leftmost value for which the mean lies below the horizontal line." Considering the plotcp above a reasonable complexity parameter would be around .002 which is near the left most reading where the X-val Relative Error curve crosses the dotted line. 
+
+```{r prunedfit, fig.width=16,fig.height=16}
+# prune the tree 
+pruned_fit <- prune(fit_order, cp = 0.002)
+
+rpart.plot(pruned_fit, 
+           box.palette="RdBu", 
+           shadow.col="gray", 
+           extra = 2, 
+           fallen.leaves= FALSE, 
+           cex = .5,
+           Margin=.4, 
+           legend.x = -0.5, 
+           legend.y = 1,
+           compress=FALSE,
+           main='Pruned Tree')
+```
+
+We will now make a prediction using the pruned tree.
+
+```{r predict pruned, fig.width=16,fig.height=16}
+##--------------------------------------
+
+prx <- predict(object=pruned_fit,tz_test[-1],type="class")
+
+tz_actual <- tz_test %>% mutate(taxo_order = as.factor(taxo_order)) %>% pull(taxo_order)
+cm <- confusionMatrix(data=prx,reference=tz_actual)
+pruned_acc <- cm$overall["Accuracy"]
+
+##--------------------------------------
+
+measure_df2 <- measuremodel(cm,"3- RPART Classification Tree - Pruned","With 0's","Order")
+measure_df_all <- measure_df_all %>% bind_rows(measure_df2)
+measure_df_all %>% knitr::kable()
+
+```
+
+The confusion matrix for the pruned tree is shown below. The results appear similar to the initial CART model, but with slightly lower overall accuracy at `r pruned_acc`.
+
+```{r check results 4, fig.width=16,fig.height=16}
+getcmplot(cm,"RPart - Classification Tree - Pruned")
+```
+
+Pruning the tree produces a much more compact tree, les complex tree - but only about 1/3 to 1/2 of the orders will "make the cut" and be included in the pruned CART model.
+
+The code below allows you to select a random row from the data and try to predict the outcome using our pruned CART model.
+
+This code will try produce one random prediction using the rpart pruned CART model:
+
+```{r tryrandom}
+tryrow <- sample_n(tz_test, 1)
+
+correct_order <- tryrow %>% select(taxo_order)
+print(as.character(correct_order$taxo_order))
+
+tryrow <- tryrow %>% select(-taxo_order,-taxo_family,-taxo_genus,-taxo_species)
+
+predicted <- pruned_fit %>% predict(tryrow, "class") 
+print(as.character(predicted))
+
+```
+
+## Random Forests
+
+Having established the possible benefits of a CART approach, A random forests ensemble method may provide even better results and a more robust model. One challenge to using this method with the data we have, is that random forests are sensitive to NA values. With NA values in the dataset, the random forest will apply complete case analysis. Even though there are 29 different orders in the training data, since many of them have at least one NA values on every row, fewer than half of these orders will *ever* be selected by the model. We will take a look at the difference between a dataset with NA's, 0's or other imputed values.
+
+As noted previously - there are some non-random patterns in the missingness of data - some of the columns are applicable only to land based, flying, or marine mammals. During model construction we will focus on common columns for land based mammals. In the final model construction, we will experiment with adding available case analysis to enable use of more specialized columns like forearm length and geo coordinates that are not as universally recorded or where special handling will be required.
+
+```{r RF Model}
+#we will start with the tzNA table, on the order level
+tz_train <- tzNA_order_parts$trainDS %>% select(-taxo_family,-taxo_genus,-taxo_species,-forearmlen_mm,-range_km2,-mid_lat,-mid_lng)
+tz_test <- tzNA_order_parts$testDS %>% select(-taxo_family,-taxo_genus,-taxo_species,-forearmlen_mm,-range_km2,-mid_lat,-mid_lng)
+
+```
+
+We have set the training set and test set to use. This is the data set with NA values.
+
+```{r random forests, fig.width=12,fig.height=16}
+
+##--------------------------------------
+# Random Forest prediction of order data
+library(randomForest)
+rf_fit <- randomForest(
+  as.factor(taxo_order)~., 
+  data=tz_train,
+  na.action=na.roughfix)
+
+#print(rf_fit) # view results
+#importance(rf_fit) # importance of each predictor 
+```
+
+The model is now trained. We will now apply a prediction on the test data with NA's. This is expected to produce a limited number of actual predictions since it will only be able to train using complete case analysis.
+
+```{r predict rf, fig.width=12,fig.height=16}
+##--------------------------------------
+# generate confusion matrix
+prx <- predict(object=rf_fit,tz_test[-1],type="class")
+
+tries <-length(as.factor(tz_test$taxo_order))
+predictions <- sum(!is.na(prx))
+
+tz_actual <- tz_test %>% mutate(taxo_order = as.factor(taxo_order)) %>% pull(taxo_order)
+
+cm <- confusionMatrix(data=prx,
+                      reference=tz_actual, 
+                      mode = "everything")
+
+overall_accuracy <- cm$overall["Accuracy"]
+
+measure_df4 <- measuremodel(cm,"4- Random Forest","With NA's","Order")
+measure_df_all <- measure_df_all %>% bind_rows(measure_df4)
+measure_df_all %>% knitr::kable()
+
+#cm$byClass %>% knitr::kable()
+```
+
+This model can only produce `r predictions` predictions out of `r tries` challenges.
+
+```{r check results rf, fig.width=16,fig.height=16}
+getcmplot(cm,"Random Forest - With NA Values")
+```
+
+The random forest model with NA's results in very high accuracy, but there are many NA's in the predictions. This is not a very practical approach if you want to produce a prediction for every row of test data. To improve the number of outcomes predicted, we will experiment with various strategies to impute data, in order to "fill in blanks", and attempt to balance the classes in order encourage the model to predict more minority classes.
+
+## Imputing 0's
+
+There are missing values on many rows, relative to the overall data set. (NA's were originally denoted in the dataset as -999, these values have been converted to an R standard _NA_) The sparseness of this data has the potential to skew any statistical analysis and presents a challenge to development of a classification tree model. There are several options available to handle the missing data. 
+
+Imputing 0 is the simplest possible approach - to fill in imputed values for any values that are missing from the data with a 0. Imputing 0's is a crude way of assigning a value that represents missing data. The fact that data is missing may be predictive in the Pantheria data, but this is not necessarily the case for data collected through other outside sources. 
+
+Imputing the mean, mode, or median, or a predicted value may also be a way to fill in the gaps in the training data. Every approach to imputation has some advantages and drawbacks. Some methods are easier to implement, but will reduce accuracy by introducing uncertain data. It is ultimately a choice in the final implementation, how to apply imputation to the data, depending on the desired model performance.
+
+In this dataset - missingness is sometimes a predictor - certain fields are set only on certain orders as previously discussed. Chiroptera are the only order with arm lengths measured. Cetacea and Sirenia do not have geocodes and values for terrestriality. Missingness can be a valuable hint as to the correct class, but it is also potentially overfitting the model by assuming that real-world challenge data is going to have the same pattern of missingness.
+
+```{r summarize}
+#we will start with the tzNA table, on the order level
+tz_train <- tzNA_order_parts$trainDS %>% select(-taxo_family,-taxo_genus,-taxo_species)
+tz_test <- tzNA_order_parts$testDS %>% select(-taxo_family,-taxo_genus,-taxo_species)
+
+tz_train[is.na(tz_train)]<-0
+tz_test[is.na(tz_test)]<-0
+
+##--------------------------------------
+#tz_train %>% group_by(taxo_order) %>% summarize(group_count = n())
+#tz_test %>% group_by(taxo_order) %>% summarize(group_count = n())
+```
+
+We will start by imputing 0 for all missing values. This is similar to using an available case analysis approach - by adding 0 the RF will be able to use all the rows in the training data, since it will not encounter any columns for which there are NA values. 
+
+Using this method will result in many false pieces of information in the training data, like animals with 0 mass. But applying 0 to both the training and test data means that there will be many cases where a 0 in a training data column will match a 0 in a test row, because both were missing the same column. 
+
+This will cause the decision tree to think this is a good match because both animals have, for example, 0 mass. Obviously this is just a "hack" to make the models line up. But it works well if the patterns of missingness are non-random. 
+
+After experimenting with the imputation of 0's, We will try various other imputation strategies throughout the model building section to try to meet our stated goals and make the final model less reliant on matching these patterns of missingness. 
+
+```{r impute 0 rfmodel, fig.width=16,fig.height=12}
+
+# Random Forest prediction of order data
+library(randomForest)
+rf_fit <- randomForest(
+  as.factor(taxo_order)~., 
+  data=tz_train,
+  na.action=na.roughfix)
+
+
+#print(rf_fit) # view results
+#importance(rf_fit) # importance of each predictor 
+
+##--------------------------------------
+
+prx <- predict(object=rf_fit,tz_test[-1],type="class")
+
+tz_actual <- tz_test %>% mutate(taxo_order = as.factor(taxo_order)) %>% pull(taxo_order)
+cm <- confusionMatrix(data=prx,reference=tz_actual, mode = "everything")
+overall_accuracy <- cm$overall["Accuracy"]
+
+measure_df5 <- measuremodel(cm,"5- Random Forest","With 0's","Order")
+measure_df_all <- measure_df_all %>% bind_rows(measure_df5)
+measure_df_all %>% knitr::kable()
+```
+
+Here is another way to visualize the results. Red dots indicate precision, orange indicates recall, and the F1 score is the purple dot. The F1 Score is stamped on the chart.
+
+```{r impute 0 visual, fig.width=16,fig.height=12}
+##--------------------------------------
+# F1 scores by class
+dfcm <- data.frame(cm$byClass)
+setDT(dfcm, keep.rownames = TRUE)
+dfcm <- dfcm %>% mutate(note = ifelse(F1 == 1,"All Correct",ifelse(F1 == 0,"All Wrong",round(F1,2))))
+
+#plot the F1 score by class
+dfcm %>% ggplot() + 
+  geom_text(aes(F1,rn,label=note),color="purple",size=4,nudge_y=.5) + 
+  geom_point(aes(Precision,rn),color="red",size=4) + 
+  geom_point(aes(Recall,rn),color="orange",size=4) + 
+  geom_point(aes(F1,rn),color="purple",size=4) + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  theme(legend.position="top")
+
+```
+
+The random forest model with 0 imputed into NA's results in an overall accuracy of `r overall_accuracy`. This has increased the number of classes predicted and resulted in fairly accurate predictions across many of the classes. However the imputation of 0 in training and test data may be overfitting the model by expecting the same pattern of missingness.
+
+```{r check results rf 2, fig.width=16,fig.height=16}
+getcmplot(cm,"Random Forest - With 0's Imputed")
+```
+
+Taking a few examples we can see the most common class, Rodentia has been correctly identified the most times. Some rodents were misidentified a variety of different incorrect orders.  
+
+A random forest model that imputes 0 to every NA value is shown. This model is quite accurate, with `r overall_accuracy` overall accuracy. It correctly identifies the majority of rows across 18 of the `r count_orders` orders in the test data.
+
+## Oversampling
+
+Not only does this data suffer from sparseness, but it also has very imbalanced classes. By oversampling the minority classes, we can provide enough observations to appear more frequently in the training data sets and increase the chance that a minority class is selected by the model. 
+
+
+```{r}
+
+oversample <- function(trainDS, min_group, max_draws, grouping){
+  
+  x <- c(1:max_draws)
+  for(n in x){
+    
+    minority_ord <- trainDS %>% 
+    group_by(!!sym(grouping)) %>% 
+    summarize(group_count =  n()) %>% 
+    filter(group_count <= min_group) 
+  
+    minorityrows <- trainDS %>% inner_join(minority_ord, by=grouping)
+    minorityrows <- minorityrows %>% select(-group_count)
+    minorityrows
+  
+    trainDS <- trainDS %>% bind_rows(minorityrows %>% sample_n(1,replace=TRUE))
+    
+  }
+
+  trainDS
+}
+
+
+```
+
+This oversample function will draw random rows until there are at least 100 rows in each order, up to a maximum of 2000 new rows.
+
+```{r impute 0 and oversample}
+
+#we will start with the tzNA table, on the order level
+tz_train <- tzNA_order_parts$trainDS %>% select(-taxo_family,-taxo_genus,-taxo_species)
+tz_test <- tzNA_order_parts$testDS %>% select(-taxo_family,-taxo_genus,-taxo_species)
+
+tz_train[is.na(tz_train)]<-0
+tz_test[is.na(tz_test)]<-0
+
+tz_train <- oversample(tz_train,100,2000,'taxo_order')
+
+```
+
+We will now train with the oversampled data.
+
+```{r impute 0 oversampled, fig.width=16,fig.height=12}
+
+# Random Forest prediction of order data
+library(randomForest)
+rf_fit <- randomForest(
+  as.factor(taxo_order)~., 
+  data=tz_train,
+  na.action=na.roughfix)
+
+
+#print(rf_fit) # view results
+#importance(rf_fit) # importance of each predictor 
+
+##--------------------------------------
+
+prx <- predict(object=rf_fit,tz_test[-1],type="class")
+
+tz_actual <- tz_test %>% mutate(taxo_order = as.factor(taxo_order)) %>% pull(taxo_order)
+cm <- confusionMatrix(data=prx,reference=tz_actual, mode = "everything")
+overall_accuracy <- cm$overall["Accuracy"]
+
+measure_df5 <- measuremodel(cm,"6- Random Forest","With 0's, Oversampled","Order")
+measure_df_all <- measure_df_all %>% bind_rows(measure_df5)
+measure_df_all  %>% knitr::kable()
+
+total_predicted <- measure_df5$Predicted
+```
+
+```{r check results os, fig.width=16,fig.height=16}
+
+cmplot <- getcmplot(cm,"Random Forest - Oversampled, With 0's Imputed")
+cmplot + 
+   
+  annotate("text",x=15,y=20,color="blue",label="More minority classes being predicted")  + 
+    annotate("path",color="blue",
+   x=8+ r*cos(seq(0,2*pi,length.out=100)),
+   y=22+ r*sin(seq(0,2*pi,length.out=100))) +
+    annotate("path",color="blue",
+   x=9+ r*cos(seq(0,2*pi,length.out=100)),
+   y=21+ r*sin(seq(0,2*pi,length.out=100))) +
+   annotate("path",color="blue",
+   x=10+ r*cos(seq(0,2*pi,length.out=100)),
+   y=20+ r*sin(seq(0,2*pi,length.out=100))) +
+   annotate("path",color="blue",
+   x=11+ r*cos(seq(0,2*pi,length.out=100)),
+   y=19+ r*sin(seq(0,2*pi,length.out=100))) +
+   annotate("path",color="blue",
+   x=19+ r*cos(seq(0,2*pi,length.out=100)),
+   y=11+ r*sin(seq(0,2*pi,length.out=100))) 
+```
+
+After oversampling the minority classes, the model attains an accuracy of `r overall_accuracy`, and it does better at finding the less common classes. For example - Lagomorpha, Erinaceomorpha, etc. are more consistently chosen. In this model, ~ `r total_predicted` of the orders are correctly identified at least once. So oversampling seems to have the expected effect of revealing more of the long-tail cases that would be missed in an imbalanced dataset. 
+
+## Imputing a Grouped Mean
+
+It should be possible to impute a more realistic value than 0 for the missing values, which could make the model more robust and able to handle data entries that don't exactly match the combination of columns recorded in Pantheria. This imputation would be expected to reduce the precision somewhat, as it is adding a lot of new "theoretical" data. The objective would be that the theoretical data could be correct, and could closely match actual challenge values passed in to the model.
+
+The imputed value will be an estimate based on the mean of each genus, family or order. Imputation increases the homogeneity of the dataset, and will consequently underestimate the standard deviation of any statistical analysis. So the mean data shoud be considered speculative - but thats ok - we are only using it for training the model. It should make the model more robust and adaptable to different sets of input parameters which may or may not match the data provided by Pantheria. 
+
+To impute mean values - we will create a copy of the training data set that replaces missing values with estimated means based on the taxonomical classes assigned. This code will first attempt to get an average for each column that's missing, by grouping first at the genus, then the family, then the order, and finally from the entire Mammalia class.
+
+```{r, fig.width=12,fig.height=8}
+#tzNA is the tinyzoo version that replaced the -999 with a standard R NA value
+tzMEAN <- tzNA_order_parts$trainDS
+library(dplyr)
+
+meanByGenus <- function(df, field) {
+  rt <- data.frame()
+  r2 <- data.frame()
+  
+  rt <- df %>%
+    filter(!is.na(!!sym(field))) %>%
+    group_by(taxo_order, taxo_family, taxo_genus) %>%
+    summarize(imputedmean = mean(!!sym(field)))
+  rt
+  
+  r2 <- df %>% left_join(rt, by=c("taxo_order"="taxo_order","taxo_family"="taxo_family","taxo_genus"="taxo_genus")) %>% 
+    mutate(is_missing = ifelse(is.na(!!sym(field)),1,0)) %>% 
+    mutate(replacement = ifelse(is_missing == 1,imputedmean,!!sym(field)))
+  r2
+ 
+}
+
+readout <- data.frame()
+loopGenus <- function(tzMEAN,field){
+  
+  before <- sum(is.na(tzMEAN %>% select(!!sym(field))))
+  tzMEAN <- meanByGenus(tzMEAN, field)
+  tzMEAN[[field]] = tzMEAN[['replacement']]
+  tzMEAN <- tzMEAN %>% select(-replacement,-is_missing,-imputedmean)
+  after <- sum(is.na(tzMEAN %>% select(!!sym(field))))
+  diff <- before - after
+  
+  #print(paste(field, diff,"imputed - ",before,"before - ",after,"after"))
+  tzMEAN
+
+}
+
+tzMEAN <- loopGenus(tzMEAN,'headlen_mm')
+tzMEAN <- loopGenus(tzMEAN,'mass_grams')
+tzMEAN <- loopGenus(tzMEAN,'litter_size')
+tzMEAN <- loopGenus(tzMEAN,'litters_peryear')
+tzMEAN <- loopGenus(tzMEAN,'gestation_days')
+tzMEAN <- loopGenus(tzMEAN,'longevity_months')
+tzMEAN <- loopGenus(tzMEAN,'diet_breadth')
+tzMEAN <- loopGenus(tzMEAN,'pop_density')
+tzMEAN <- loopGenus(tzMEAN,'trophic_level')
+tzMEAN <- loopGenus(tzMEAN,'terrestriality')
+tzMEAN <- loopGenus(tzMEAN,'sex_maturity')
+tzMEAN <- loopGenus(tzMEAN,'wean_age')
+tzMEAN <- loopGenus(tzMEAN,'activity_cycle')
+tzMEAN <- loopGenus(tzMEAN,'forearmlen_mm')
+tzMEAN <- loopGenus(tzMEAN,'mid_lat')
+tzMEAN <- loopGenus(tzMEAN,'mid_lng')
+tzMEAN <- loopGenus(tzMEAN,'range_km2')
+
+
+```
+
+
+
+```{r, fig.width=12,fig.height=8}
+
+meanByFamily <- function(df, field) {
+  rt <- data.frame()
+  r2 <- data.frame()
+  
+  rt <- df %>%
+    filter(!is.na(!!sym(field))) %>%
+    group_by(taxo_order, taxo_family) %>%
+    summarize(imputedmean = mean(!!sym(field)))
+  rt
+  
+  r2 <- df %>% left_join(rt, by=c("taxo_order"="taxo_order","taxo_family"="taxo_family")) %>% 
+    mutate(is_missing = ifelse(is.na(!!sym(field)),1,0)) %>% 
+    mutate(replacement = ifelse(is_missing == 1,imputedmean,!!sym(field)))
+  r2
+ 
+}
+
+readout <- data.frame()
+loopFamily <- function(tzMEAN,field){
+  
+  before <- sum(is.na(tzMEAN %>% select(!!sym(field))))
+  tzMEAN <- meanByFamily(tzMEAN, field)
+  tzMEAN[[field]] = tzMEAN[['replacement']]
+  tzMEAN <- tzMEAN %>% select(-replacement,-is_missing,-imputedmean)
+  after <- sum(is.na(tzMEAN %>% select(!!sym(field))))
+  diff <- before - after
+  
+  #print(paste(field, diff,"imputed - ",before,"before - ",after,"after"))
+  tzMEAN
+
+}
+
+tzMEAN <- loopFamily(tzMEAN,'headlen_mm')
+tzMEAN <- loopFamily(tzMEAN,'mass_grams')
+tzMEAN <- loopFamily(tzMEAN,'litter_size')
+tzMEAN <- loopFamily(tzMEAN,'litters_peryear')
+tzMEAN <- loopFamily(tzMEAN,'gestation_days')
+tzMEAN <- loopFamily(tzMEAN,'longevity_months')
+tzMEAN <- loopFamily(tzMEAN,'diet_breadth')
+tzMEAN <- loopFamily(tzMEAN,'pop_density')
+tzMEAN <- loopFamily(tzMEAN,'trophic_level')
+tzMEAN <- loopFamily(tzMEAN,'terrestriality')
+tzMEAN <- loopFamily(tzMEAN,'sex_maturity')
+tzMEAN <- loopFamily(tzMEAN,'wean_age')
+tzMEAN <- loopFamily(tzMEAN,'activity_cycle')
+tzMEAN <- loopFamily(tzMEAN,'forearmlen_mm')
+tzMEAN <- loopFamily(tzMEAN,'mid_lat')
+tzMEAN <- loopFamily(tzMEAN,'mid_lng')
+tzMEAN <- loopFamily(tzMEAN,'range_km2')
+
+
+```
+
+
+```{r, fig.width=12,fig.height=8}
+
+meanByOrder <- function(df, field) {
+  rt <- data.frame()
+  r2 <- data.frame()
+  
+  rt <- df %>%
+    filter(!is.na(!!sym(field))) %>%
+    group_by(taxo_order) %>%
+    summarize(imputedmean = mean(!!sym(field)))
+  rt
+  
+  r2 <- df %>% left_join(rt, by=c("taxo_order"="taxo_order")) %>% 
+    mutate(is_missing = ifelse(is.na(!!sym(field)),1,0)) %>% 
+    mutate(replacement = ifelse(is_missing == 1,imputedmean,!!sym(field)))
+  r2
+ 
+}
+
+readout <- data.frame()
+loopOrder <- function(tzMEAN,field){
+  
+  before <- sum(is.na(tzMEAN %>% select(!!sym(field))))
+  tzMEAN <- meanByOrder(tzMEAN, field)
+  tzMEAN[[field]] = tzMEAN[['replacement']]
+  tzMEAN <- tzMEAN %>% select(-replacement,-is_missing,-imputedmean)
+  after <- sum(is.na(tzMEAN %>% select(!!sym(field))))
+  diff <- before - after
+  
+  #print(paste(field, diff,"imputed - ",before,"before - ",after,"after"))
+  tzMEAN
+
+}
+
+tzMEAN <- loopOrder(tzMEAN,'headlen_mm')
+tzMEAN <- loopOrder(tzMEAN,'mass_grams')
+tzMEAN <- loopOrder(tzMEAN,'litter_size')
+tzMEAN <- loopOrder(tzMEAN,'litters_peryear')
+tzMEAN <- loopOrder(tzMEAN,'gestation_days')
+tzMEAN <- loopOrder(tzMEAN,'longevity_months')
+tzMEAN <- loopOrder(tzMEAN,'diet_breadth')
+tzMEAN <- loopOrder(tzMEAN,'pop_density')
+tzMEAN <- loopOrder(tzMEAN,'trophic_level')
+tzMEAN <- loopOrder(tzMEAN,'terrestriality')
+tzMEAN <- loopOrder(tzMEAN,'sex_maturity')
+tzMEAN <- loopOrder(tzMEAN,'wean_age')
+tzMEAN <- loopOrder(tzMEAN,'activity_cycle')
+tzMEAN <- loopOrder(tzMEAN,'forearmlen_mm')
+tzMEAN <- loopOrder(tzMEAN,'mid_lat')
+tzMEAN <- loopOrder(tzMEAN,'mid_lng')
+tzMEAN <- loopOrder(tzMEAN,'range_km2')
+
+
+```
+
+
+```{r, fig.width=12,fig.height=8}
+tzMEAN <- tzMEAN %>% mutate(taxo_class = "Mammalia")
+
+meanByClass <- function(df, field) {
+  rt <- data.frame()
+  r2 <- data.frame()
+  
+  rt <- df %>%
+    filter(!is.na(!!sym(field))) %>%
+    group_by(taxo_class) %>%
+    summarize(imputedmean = mean(!!sym(field)))
+  rt
+  
+  r2 <- df %>% left_join(rt, by=c("taxo_class"="taxo_class")) %>% 
+    mutate(is_missing = ifelse(is.na(!!sym(field)),1,0)) %>% 
+    mutate(replacement = ifelse(is_missing == 1,imputedmean,!!sym(field)))
+  r2
+ 
+}
+
+readout <- data.frame()
+loopClass <- function(tzMEAN,field){
+  
+  before <- sum(is.na(tzMEAN %>% select(!!sym(field))))
+  tzMEAN <- meanByClass(tzMEAN, field)
+  tzMEAN[[field]] = tzMEAN[['replacement']]
+  tzMEAN <- tzMEAN %>% select(-replacement,-is_missing,-imputedmean)
+  after <- sum(is.na(tzMEAN %>% select(!!sym(field))))
+  diff <- before - after
+  
+  #print(paste(field, diff,"imputed - ",before,"before - ",after,"after"))
+  tzMEAN
+
+}
+
+tzMEAN <- loopClass(tzMEAN,'headlen_mm')
+tzMEAN <- loopClass(tzMEAN,'mass_grams')
+tzMEAN <- loopClass(tzMEAN,'litter_size')
+tzMEAN <- loopClass(tzMEAN,'litters_peryear')
+tzMEAN <- loopClass(tzMEAN,'gestation_days')
+tzMEAN <- loopClass(tzMEAN,'longevity_months')
+tzMEAN <- loopClass(tzMEAN,'diet_breadth')
+tzMEAN <- loopClass(tzMEAN,'pop_density')
+tzMEAN <- loopClass(tzMEAN,'trophic_level')
+tzMEAN <- loopClass(tzMEAN,'terrestriality')
+tzMEAN <- loopClass(tzMEAN,'sex_maturity')
+tzMEAN <- loopClass(tzMEAN,'wean_age')
+tzMEAN <- loopClass(tzMEAN,'activity_cycle')
+tzMEAN <- loopClass(tzMEAN,'forearmlen_mm')
+tzMEAN <- loopClass(tzMEAN,'mid_lat')
+tzMEAN <- loopClass(tzMEAN,'mid_lng')
+tzMEAN <- loopClass(tzMEAN,'range_km2')
+
+
+#remove estimated forewarm length for non flying mammals
+#remove geo data for marine mammals
+tzMEAN <- tzMEAN %>% mutate(forearmlen_mm = ifelse(taxo_order == 'Chiroptera',forearmlen_mm,0))
+
+tzMEAN <- tzMEAN %>% mutate(mid_lat = ifelse(taxo_order == 'Cetacea' | taxo_order == 'Sirenia',0,mid_lat))
+tzMEAN <- tzMEAN %>% mutate(mid_lng = ifelse(taxo_order == 'Cetacea' | taxo_order == 'Sirenia',0,mid_lng))
+tzMEAN <- tzMEAN %>% mutate(range_km2 = ifelse(taxo_order == 'Cetacea' | taxo_order == 'Sirenia',0,range_km2))
+
+
+tzMEAN %>% slice(1:10) %>% select(taxo_order,taxo_family,taxo_genus,taxo_species,mass_grams,headlen_mm) %>% knitr::kable()
+```
+
+The MEAN imputation has added estimates based on a grouped mean in every missing cell for all common values. We can now train a new random forest using this data and see how well it performs.
+
+```{r}
+#clear some of the varianbvles that are not "universally" recorded
+#we will address ways to use these in the construction of an available case moodel
+tz_train <- tzMEAN %>% select(-taxo_class,-taxo_family,-taxo_genus,-taxo_species,-forearmlen_mm,-mid_lat,-mid_lng,-range_km2)
+tz_test <- tzNA_order_parts$testDS %>% select(-forearmlen_mm,-mid_lat,-mid_lng,-range_km2)
+
+```
+
+This version uses a complete case analysis similar to model 4. It produces very few predictions, but they are even more accurate than a simple randomforest with NA's. This implies that the MEAN data is helping (or at least, not hurting) the accuracy when it can match rows of data in the test data with imputed mean values in the training data. 
+
+```{r}
+# Random Forest prediction of order data
+library(randomForest)
+rf_fit <- randomForest(
+  as.factor(taxo_order)~., 
+  data=tz_train,
+  na.action=na.roughfix)
+
+##--------------------------------------
+prx <- predict(object=rf_fit,tz_test,type="class")
+tz_actual <- tz_test %>% mutate(taxo_order = as.factor(taxo_order)) %>% pull(taxo_order)
+cm <- confusionMatrix(data=prx,reference=tz_actual)
+overall_accuracy <- cm$overall["Accuracy"]
+
+##--------------------------------------
+
+measure_df9 <- measuremodel(cm,"7- Random Forest","MEAN Imputation with NA's","Order")
+measure_df_all <- measure_df_all %>% bind_rows(measure_df9)
+measure_df_all %>% knitr::kable()
+
+```
+
+
+```{r check results mean, fig.width=16,fig.height=16}
+getcmplot(cm,"Random Forest - MEAN Imputation - Complete Case Analysis")
+```
+
+Changing the NA's to 0 in the test data could increase outcomes - but it will probably reduce accuracy, since there will be many cases where a 0 imputed in the test data follows a decision tree rule based on a imputed mean estimate in the training data, and this will "throw off" the decision tree.
+
+```{r}
+
+#clear some of the varianbvles that are not "universally" recorded
+#we will address ways to use these in the construction of an available case moodel
+
+tz_train <- tzMEAN %>% select(-taxo_class,-taxo_family,-taxo_genus,-taxo_species,-forearmlen_mm,-mid_lat,-mid_lng,-range_km2)
+tz_test <- tzNA_order_parts$testDS %>% select(-forearmlen_mm,-mid_lat,-mid_lng,-range_km2)
+
+tz_test[is.na(tz_test)]<-0
+```
+
+We have imputed 0 to the test data to try this out.
+
+```{r}
+# Random Forest prediction of order data
+library(randomForest)
+rf_fit <- randomForest(
+  as.factor(taxo_order)~., 
+  data=tz_train,
+  na.action=na.roughfix)
+
+##--------------------------------------
+prx <- predict(object=rf_fit,tz_test,type="class")
+tz_actual <- tz_test %>% mutate(taxo_order = as.factor(taxo_order)) %>% pull(taxo_order)
+cm <- confusionMatrix(data=prx,reference=tz_actual)
+overall_accuracy <- cm$overall["Accuracy"]
+
+##--------------------------------------
+
+measure_df9 <- measuremodel(cm,"8- Random Forest","MEAN Imputation with 0's","Order")
+measure_df_all <- measure_df_all %>% bind_rows(measure_df9)
+measure_df_all %>% knitr::kable()
+
+```
+
+As expected, the accuracy goes way down, because the imputed 0's in test data and imputed mean in the training data don't match well.
+
+```{r check results mean 2, fig.width=16,fig.height=16}
+getcmplot(cm,"Random Forest - MEAN Imputation with 0's")
+```
+
+The challenge here, is that the test data can't be imputed in the same way as the training data- we don't know the genus, family or order of the test rows - so we can't impute based on these unknown factors. Any comparison between test data with 0's and _imputed_ training data with estimates will lead to significant mismatches in the data. 
+
+However - using _imputed_ data for training combined with a more complex, _available case_ model may produce a "best of both worlds" result - with our informed guess for all fields in the training data being used as the basis of predictions - but ONLY training on the same combination of fields that are supplied in the test data. 
+
+The most obvious benefit of this approach, is that since we know that marine mammals never have geography data, and because only bats have forearm length - an available case model will allow  use of these predictors, but ONLY when provided as part of the test data. It will also use of test data that has only a portion of the predictors provided. An available case model should allow more of an apples-to-apples comparison if a row in the test data has the same fields as a similar species in the training data- and even if some predictors are not present in the training data- the available case model will adapt by using the estimated mean values for those fields only. 
+
+## Model Analysis
+
+After all the foregoing model tests, the method that appears to give the greatest overall number of outcomes, and highest accuracy against our 20% internal test data is the oversampled data with 0 imputed. 
+
+The accuracy of this model is about the same as that of other models, but it is also producing a broader range of possible outcomes due to the oversampling of minority classes. 
+
+Other imputation strategies and use of available case analysis strategies may make this model more robust, at the cost of some accuracy. 
+
+We will now switch to the final encapsulation and testing of the model against the hold-out data. 
+
+# Encapsulation of the Model
+
+Now that the model has been developed, we will encapsulate the models into self-contained functions.
+
+## Predict Order - Basic Model
+
+Here is a basic model that will predict the order and impute 0 if indicated and/or apply oversampling.
+
+```{r basic model}
+#SIMPLE NON-RECURSIVE MODEL TO PREDICT ORDER
+predictorder <- function(trainDS,testDS,impute,oversamplemin,oversamplemax){
+  ##--------------------------------------
+  #IMPUTE 0 IF INDICATED
+  if(impute == 'zero'){
+     trainDS[is.na(trainDS)]<-0
+     testDS[is.na(testDS)]<-0
+  }
+  
+  if(oversamplemin > 0){
+    trainDS <- oversample(trainDS,oversamplemin,oversamplemax,'taxo_order')
+  }
+  
+  # Random Forest prediction of order data
+  library(randomForest)
+  rf_fit <- randomForest(
+    as.factor(taxo_order)~., 
+    data=trainDS,
+    na.action=na.roughfix
+    )
+  
+  ##--------------------------------------
+  prx <- predict(object=rf_fit,testDS,type="class")
+  tz_actual <- tz_test %>% mutate(taxo_order = as.factor(taxo_order)) %>% pull(taxo_order)
+  
+  cm <- confusionMatrix(data=prx,reference=tz_actual)
+  
+  returnobj <-list(
+                  confusionmatrix=cm,
+                  predictions=prx
+                  )
+
+  class(returnobj) <- "rfresults"
+  returnobj
+}
+```
+
+To explore a more sophisticated implementation of the model, that may be more robust and practical - we will now build a version that "drills down" to make predictions to the family and genus ranks, uses MEAN imputation, available case analysis, and oversampling.
+
+## Predict Genus - Available Case Model
+
+This version of the model uses only available cases in the training data having all of the same predictors set. The MEAN data will have values set on every row for all predictors, either factual or estimated. The model will train a random forest and make a prediction for one test row at a time, using ONLY the list of columns specified in that one row of test data. It will then do the same process for the family, and the genus. 
+
+This is a bit complex to accomplish. Here's how it will work:
+
+Round 1 - Order (least specific)
+
+* First, we sample 1 row of data which includes, family and order and genus. 
+* Create a Training Set that removes family & genus columns leaving only the order
+* Fit the RF Model for the Order rank
+* Make a prediction for Order
+
+Round 2 - Family (more specific) 
+
+* Filter the original training data to include only the family
+* Create a Training Set that includes only the predicted order, with only the family column and predictors
+* Fit the RF Model for the Family rank
+* Make a prediction for Family
+
+Round 3 - Genus (most specific)
+
+* Filter the original training data to include only the genus
+* Create a Training Set that includes only the predicted family, with only the genus column and predictors
+* Fit the RF Model for the Genus rank
+* Make a prediction for Genus
+
+This approach enables us to predict across more than 53 outcome classes, which is the upper limit of the randomForest package. Since the correct _order_ will be predicted about 80% of the time, this would be the maximum expected accuracy when predicting at the _family_ or _genus_ level. If the first guess was wrong the second must be wrong. However if it predicts the order right in the first round, then it should have a pretty good chance of getting the family right on the second step, etc. as it will use a more focused inter-class dataset to make this second and third layer of prediction.
+
+```{r predictgenus available case model, warning=FALSE, message=FALSE}
+
+extract_columns <- function(data, desired_columns) {
+    extracted_data <- data %>%
+        select_(.dots = desired_columns)
+    return(extracted_data)
+}
+
+predictgenusac <- function(trainDS,testRow){
+  
+  predicted_order <- ''
+  predicted_family <- ''
+  predicted_genus <- ''
+  
+  
+  ##--------------------------------------
+  #SETUP - LEAVE ONLY ORDER DATA
+  train_order <- trainDS %>% select(-taxo_family, -taxo_genus, -taxo_species)
+  test_order <- testRow %>% select(-taxo_family, -taxo_genus, -taxo_species)
+  
+  #remove the reference class for the purpose of making a prediction
+  test_order_pred <- test_order %>% select(-taxo_order)
+  onerow <- testRow
+  
+  #Select a list of names of the columns that are in the test set
+  usecolumns <- colnames(test_order_pred)[colSums(!is.na(test_order_pred)) > 0]
+  test_columns <- length(usecolumns)
+ 
+  #print(paste("Test Columns:",test_columns))
+  
+  #Extract those columns only from the training set 
+  train_extracted <- extract_columns(train_order,usecolumns) 
+  test_extracted <- extract_columns(onerow,usecolumns)
+ 
+  #Reconstruct the training table with class and predictors only
+  train_order <- train_order %>% select(taxo_order) %>% bind_cols(train_extracted) 
+  train_order <- train_order %>% drop_na()
+  train_order$taxo_order <- droplevels(train_order$taxo_order)
+  
+  
+  
+  #-----------------------------------------
+  #PREDICT ORDER
+  library(randomForest)
+  rf_fit_order <- randomForest(
+    as.factor(taxo_order)~., 
+    data=train_order,
+    na.action=na.roughfix
+    )
+
+  prx <- predict(object=rf_fit_order, 
+                 test_order_pred,
+                 type="class")
+  
+  predicted_order <- prx
+  predicted_order <- as.character(predicted_order)
+   #-----------------------------------------
+    #CHECK FOR SUB FAMILES
+   
+  
+   #print(paste("Predicted Order:",predicted_order))
+  
+   sub_family <- trainDS %>% 
+    filter(as.character(taxo_order) == as.character(predicted_order)) %>% 
+   group_by(taxo_family) %>% summarize(groupcount = n())
+  
+   num_fams <- count(sub_family)$n
+ 
+   #print(paste("num_fams:",num_fams))
+  
+   if(num_fams == 1){
+     predicted_family <- sub_family %>% pull(taxo_family)
+     predicted_family <- as.character(predicted_family)
+     
+     
+     
+      }else{
+     
+        
+   ##--------------------------------------
+    #SETUP FAMILY DATA
+      train_family <- trainDS %>% 
+      filter(as.character(taxo_order) == as.character(predicted_order)) %>% 
+      select(-taxo_order, -taxo_genus, -taxo_species) %>% 
+      mutate(taxo_family = as.character(taxo_family))  %>% 
+      mutate(taxo_family = as.factor(taxo_family)) 
+    
+      #Leave only Family Class
+      test_family <- testRow %>% select(-taxo_order, -taxo_genus, -taxo_species) 
+      
+      #Leave only predictors
+      test_family_pred <- test_family %>% select(-taxo_family)
+   
+      #AVAILABLE CASE ANALYSIS
+      #Select the columsn that in the test set
+      usecolumns <- colnames(test_family_pred)[colSums(!is.na(test_family_pred)) > 0]
+     
+      #Extract those columns only from the training set 
+      train_extracted <- extract_columns(train_family,usecolumns) 
+      test_extracted <- extract_columns(onerow,usecolumns)
+     
+      #Reconstruct the training table with class and predictors only
+      train_family <- train_family %>% select(taxo_family) %>% bind_cols(train_extracted) 
+      train_family <- train_family %>% drop_na()
+      train_family$taxo_family <- droplevels(train_family$taxo_family)
+      
+      if (nrow(train_family)>1 ){
+          #-----------------------------------------
+          #PREDICT FAMILY
+          rf_fit_family <- randomForest(
+          as.factor(taxo_family)~., 
+          data=train_family,
+          na.action=na.roughfix
+          )
+        
+          prx <- predict(object=rf_fit_family,test_family_pred,type="class")
+        
+          predicted_family <- prx
+          predicted_family <- as.character(predicted_family)
+      
+      }else{
+        
+         predicted_family <- train_family %>% pull(taxo_family)
+        predicted_family <- as.character(predicted_family)
+        }
+      }
+   
+   #print(paste("Predicted Family:",predicted_family))
+  
+      #-----------------------------------------
+      #CHECK FOR SUB GENUS
+     
+      sub_genus <- trainDS %>% 
+      filter(as.character(taxo_order) == as.character(predicted_order) & as.character(taxo_family) == as.character(predicted_family)) %>% 
+      group_by(taxo_genus) %>% summarize(groupcount = n())
+      num_genus <- count(sub_genus)$n
+
+      #print(paste("num_genus:",num_genus))
+  
+      if(num_genus == 1){
+         predicted_genus <- sub_genus %>% pull(taxo_genus)
+         predicted_genus <- as.character(predicted_genus)
+        
+      }else{
+     
+          ##--------------------------------------
+          #SETUP GENUS DATA
+         
+         #leave genus & Predictors only in training data
+          train_genus <- trainDS %>% 
+          filter(as.character(taxo_order) == as.character(predicted_order) & as.character(taxo_family) == as.character(predicted_family)) %>% 
+          select(-taxo_order, -taxo_family, -taxo_species)  %>%
+          mutate(taxo_genus = as.character(taxo_genus))  %>% 
+          mutate(taxo_genus = as.factor(taxo_genus)) 
+        
+          #leave predictors and genus class only
+          test_genus <- testRow %>% 
+          select(-taxo_order, -taxo_family, -taxo_species)
+          
+          #leave predictorsonly
+          test_genus_pred <- test_genus %>% select(-taxo_genus)
+       
+          #AVAILABLE CASE ANALYSIS
+          #Select the columsn that in the test set
+          usecolumns <- colnames(test_genus_pred)[colSums(!is.na(test_genus_pred)) > 0]
+          
+          #Extract those columns only from the training set 
+          train_extracted <- extract_columns(train_genus,usecolumns) 
+          test_extracted <- extract_columns(onerow,usecolumns)
+         
+          #Reconstruct the training table with class and predictors only
+          train_genus <- train_genus %>% select(taxo_genus) %>% bind_cols(train_extracted) 
+          train_genus <- train_genus %>% drop_na()
+          train_genus$taxo_genus <- droplevels(train_genus$taxo_genus)
+          
+          
+          if (nrow(train_genus)>1 ){
+              #-----------------------------------------
+            #PREDICT GENUS
+            rf_fit_genus <- randomForest(
+            as.factor(taxo_genus)~., 
+            data=train_genus,
+            na.action=na.roughfix
+            )
+          
+            prx <- predict(object=rf_fit_genus,test_genus_pred,type="class")
+          
+            predicted_genus <- prx
+            predicted_genus <- as.character(predicted_genus)
+            predicted_genus
+         }else{
+            predicted_genus <- train_genus %>% pull(taxo_genus)
+            predicted_genus <- as.character(predicted_genus)
+         }
+          
+      
+    
+   }
+ 
+  #print(paste("Predicted Genus:",predicted_genus))
+  
+  
+  returnobj <- list(
+    order=predicted_order,
+    family=predicted_family,
+    genus=predicted_genus,
+    test_cols=test_columns
+  )
+ 
+  returnobj
+  
+ 
+} 
+```
+
+This is the container for the actual model that runs through the test data one row at a time.
+
+```{r acgenusmodel container, warning=FALSE, message=FALSE}
+
+acgenusmodel <- function(trainDS,testDS){
+#create a table of the results of bernoulli trails using the hold-out data to train the recursive model
+#the recursive model must run one row at a time since each row it chooses spawns a new model training process
+trials <- data.frame()
+attempts <- seq(1:nrow(testDS))
+set.seed(1)
+
+#set the training to the entire dataset (minus the hold-out)
+trainDS_recursive <- trainDS
+
+#oversample the training data
+trainDS_recursive_os <- oversample(trainDS_recursive,100,2000,'taxo_order')
+
+#make some predictions
+for(a in attempts){
+  
+  last_a <- a
+  onerow <- testDS %>% slice(a:a)
+  predicted <- predictgenusac(trainDS_recursive_os,onerow)
+ 
+  order_match <- (as.character(predicted$order) == as.character(onerow$taxo_order))
+  family_match <- (as.character(predicted$family) == as.character(onerow$taxo_family))
+  genus_match <- (as.character(predicted$genus) == as.character(onerow$taxo_genus))
+  
+  newrow <- data.frame(pred_order=as.character(predicted$order),
+                       pred_fam=as.character(predicted$family),
+                       pred_genus=as.character(predicted$genus),
+                       correct_order=as.character(onerow$taxo_order),
+                       correct_fam=as.character(onerow$taxo_family),
+                       correct_genus=as.character(onerow$taxo_genus),
+                       correct_species=as.character(onerow$taxo_species),
+                       test_cols=as.character(predicted$test_cols),
+                       order_correct=order_match,
+                       family_correct=family_match,
+                       genus_correct=genus_match
+                       )
+  
+  trials <- trials %>% bind_rows(newrow)
+  
+}
+
+order_acc2 <- mean(trials$order_correct)
+family_acc2 <- mean(trials$family_correct)
+genus_acc2 <- mean(trials$genus_correct)
+
+#print(paste("order:",order_acc2))
+#print(paste("family:",family_acc2))
+#print(paste("genus:",genus_acc2))
+
+trials <- trials %>% left_join(order_info, by = c("pred_order" = "taxo_order"))
+trials <- trials %>% left_join(order_info, by = c("correct_order" = "taxo_order"))
+
+trials
+}
+
+```
+
+# Results
+
+## Calling the Basic Model
+
+The __predictorder__ function will run the basic order-level prediction model with 0 imputed and all data columns used.
+
+```{r get basic model cm}
+tz_train <- tzNA_species_holdout$trainDS %>% select(-taxo_family,-taxo_genus,-taxo_species)
+tz_test <- tzNA_species_holdout$testDS %>% select(-taxo_family,-taxo_genus,-taxo_species)
+
+prx <- predictorder(tz_train,tz_test,'zero',100,2000)
+cm <- prx$confusionmatrix
+overall_accuracy <- cm$overall["Accuracy"]
+
+```
+
+## Assessing the Basic Model
+
+We have run the basic model against our hold-out data set. Now we will examine how the basic model performed.
+
+```{r check results basic model, fig.width=16,fig.height=16}
+getcmplot(cm,"Random Forest - Basic Model - Final Test - Rank: Order")
+```
+
+```{r measurebasicfinal}
+measure_df10 <- measuremodel(cm,"9- Random Forest","Basic Model - Order - FINAL","Order")
+measure_df_all <- measure_df_all %>% bind_rows(measure_df10)
+measure_df_all %>% knitr::kable()
+```
+
+The basic model is able to predict the Order with overall accuracy of `r overall_accuracy`. This looks like very high accuracy, but as noted earlier - this may be the result of overfitting, particularly with respect to missingness - as it would rely on the patterns of missingness being the same in a real world challenge scenario. We will now examine how the Advanced model compares on the same hold-out dataset.
+
+## Calling the Advanced Available Case Model
+
+The __acgenusmodel__ function will run the final available case model. This model usually takes 10-15 minutes to run against the ~300 rows of hold-out testing data.
+
+```{r run final acmodel, cache = TRUE, warning=FALSE, message=FALSE}
+#set teh data to use
+trainDS <- tzMEAN 
+testDS <- tzNA_species_holdout$testDS
+#run the model
+trials <- acgenusmodel(trainDS,testDS)
+```
+
+Randomly selecting 10 rows reveals how the model performed on just a few of the predictions. It looks like it has done pretty well and made a reasonable guess at both the Order and Family level in most cases, with more confusion at the Genus level, as expected.
+
+```{r peek results}
+trials %>% sample_n(10) %>% select(pred_order,pred_fam,pred_genus,correct_order,correct_fam,correct_genus) %>% knitr::kable()
+```
+
+```{r get final order cm}
+correct_ords <- trials  %>% pull(correct_order)
+pred_ords <- trials %>% pull(pred_order)
+check_ords <- c(correct_ords,pred_ords)  
+
+ord_levels <- levels(droplevels(as.factor(check_ords)))
+cm <- confusionMatrix(data=factor(trials$pred_order,levels =ord_levels),reference=factor(trials$correct_order,levels = ord_levels))
+
+```
+
+```{r check accuracy by rank}
+
+orders_intest <- nrow(tzNA_species_holdout$testDS %>% 
+                        group_by(taxo_order) %>% 
+                        summarize(ordercount = n()))
+
+orders_predicted <- nrow(trials %>% group_by(pred_order) %>% 
+                           summarize(ordercount = n()))
+
+order_acc <- mean(trials$order_correct)
+family_acc <- mean(trials$family_correct)
+genus_acc <- mean(trials$genus_correct)
+
+```
+
+Having examined a few of the raw predictions, we will now use our familiar confusion matrix visualization charts to examine the outcome of the final advanced available case model. Since this model is predicting three different sets of factors, three confusion matrices will be necessary to examine the various ranks of Order, Family and Genus.
+
+```{r check results final order, fig.width=16,fig.height=16}
+getcmplot(cm,"Random Forest - Available Case Model - Final Test - Rank: Order","All Predictions for Holdout data")
+```
+
+The plot above explores the prediction across all orders. We can drill down to the family rank and observe how the model has performed within one order. We will use Rodentia since it is the order with the most predictions.
+
+```{r get final family cm}
+correct_fams <- trials %>% filter(correct_order == 'Rodentia')  %>% pull(correct_fam)
+pred_fams <- trials %>% filter(pred_order == 'Rodentia')  %>% pull(pred_fam)
+check_fams <- c(correct_fams,pred_fams)  
+
+fam_levels <- levels(droplevels(as.factor(check_fams)))
+cm <- confusionMatrix(data=factor(trials$pred_fam,levels =fam_levels),reference=factor(trials$correct_fam,levels = fam_levels))
+
+```
+
+```{r check results final fam, fig.width=16,fig.height=16}
+getcmplot(cm,"Random Forest - Available Case Model - Final Test - Rank: Family","Predictions of Families in Order: Rodentia for Holdout data")
+```
+
+And finally we can drill down to the Genus rank and observe how the model has performed within one family. We will use Rodentia > Cricetidae since it is the Family with the most predictions.
+
+```{r get final genus cm}
+correct_gens <- trials %>% filter(correct_order == 'Rodentia') %>% filter(correct_fam == 'Cricetidae') %>% pull(correct_genus)
+pred_gens <- trials %>% filter(pred_order == 'Rodentia') %>% filter(pred_fam == 'Cricetidae') %>% pull(pred_genus)
+check_gens <- c(correct_gens,pred_gens)  
+
+genus_levels <- levels(droplevels(as.factor(check_gens)))
+cm <- confusionMatrix(data=factor(trials$pred_genus,levels =genus_levels),reference=factor(trials$correct_genus,levels = genus_levels))
+```
+
+```{r check results final genus, fig.width=16,fig.height=16}
+getcmplot(cm,"Random Forest - Available Case Model - Final Test - Rank: Genus","Predictions of Genus in Order: Rodentia > Family: Cricetidae for Holdout data")
+```
+
+## Assessing the Advanced Model
+
+Now we will look at how the advanced model has performed across all predictions at each rank. 
+
+```{r measure final order}
+correct_ords <- trials  %>% pull(correct_order)
+pred_ords <- trials %>% pull(pred_order)
+check_ords <- c(correct_ords,pred_ords)  
+
+ord_levels <- levels(droplevels(as.factor(check_ords)))
+cm <- confusionMatrix(data=factor(trials$pred_order,levels =ord_levels),reference=factor(trials$correct_order,levels = ord_levels))
+
+```
+
+```{r measureadvfinal order}
+measure_df11 <- measuremodel(cm,"10- Random Forest","Advanced Model - Order - FINAL","Order")
+measure_df_all <- measure_df_all %>% bind_rows(measure_df11)
+```
+
+```{r measure final family}
+correct_fams <- trials  %>% pull(correct_fam)
+pred_fams <- trials %>% pull(pred_fam)
+check_fams <- c(correct_fams,pred_fams)  
+
+fam_levels <- levels(droplevels(as.factor(check_fams)))
+cm <- confusionMatrix(data=factor(trials$pred_fam,levels =fam_levels),reference=factor(trials$correct_fam,levels = fam_levels))
+
+```
+
+```{r measureadvfinal family}
+measure_df12 <- measuremodel(cm,"11- Random Forest","Advanced Model - Family - FINAL","Family")
+measure_df_all <- measure_df_all %>% bind_rows(measure_df12)
+```
+
+```{r measure final genus}
+correct_gens <- trials %>% pull(correct_genus)
+pred_gens <- trials %>% filter(pred_genus != '') %>% pull(pred_genus)
+check_gens <- c(correct_gens,pred_gens)  
+
+genus_levels <- levels(droplevels(as.factor(check_gens)))
+cm <- confusionMatrix(data=factor(trials$pred_genus,levels =genus_levels),reference=factor(trials$correct_genus,levels = genus_levels))
+```
+
+```{r measureadvfinal genus}
+measure_df13 <- measuremodel(cm,"12- Random Forest","Advanced Model - Genus -  FINAL","Genus")
+measure_df_all <- measure_df_all %>% bind_rows(measure_df13)
+measure_df_all %>% knitr::kable()
+```
+
+The final accuracy on the hold-out data using available case analysis, mean imputation, and oversampling applied to the training data, is around `r order_acc` at the Order rank; `r family_acc` at the Family rank; and `r genus_acc` at the Genus rank when making predictions against our final hold-out validation data. The model is predicting correctly `r orders_predicted` different orders out of the `r orders_intest` distinct orders contained in the holdout test data. As shown in the table above, the mean F1 scores are also in the same neighborhood as the models we used in testing - so that is a good sign that we are getting a reasonable balance of precision and recall in the final model.
+
+# Conclusion
+
+It was challenging to construct a model that provided good overall accuracy and made a diversity of predictions. The final model selected produces fairly high accuracy at the Order level, with expected decreases in accuracy as the model predicts at a more specific rank of taxonomy. 
+
+One of the challenges of this model was that we did not have very abundant data to begin with. Since each row in Pantheria represents one species, there were a limited number of rows to use, and it was necessary to use a strategic approach to partitioning the data to ensure a good cross section of rows would be randomly selected for training, test, and hold-out data sets. 
+
+The basic model provides a fast and simple way to predict to the Order rank. The accuracy is very high, but it is not very useful, and would rely on having test data with similar patterns of missingness. So that model is not very robust and may be somewhat overfitted, especially if it were used with real-world challenge data.
+
+The available case model solves some of these problems, but at a steep cost in performance and run time. Because it must construct 3 different RF models per prediction, and because the RF model varies depending on the number of data points provided, it can only make one prediction at a time.
+
+## Performance Tuning
+
+There may be room for further improvement through implementation of more complex imputation strategies on the training data to estimate missing values more precisely. The grouped mean assumes that taxonomical groups are homogeneous - but imputation based on linear regression may sometimes be more accurate. However the data already contains some extrapolated values - so one must be careful not to over-extrapolate from inferred data.
+
+Implementation of a more sophisticated imputation strategy was beyond the scope of this report - but may be a good subject for further exploration. Addition of more data from other sources could also help fortify the training data available from Pantheria.  Model tuning through optimization of the Random Forest parameters, or adjustment to the amount of oversampling may also enhance model performance.
+
+## Interactive Demonstration
+
+In order to demonstrate an application of the model, a "Mammal Predictor" Shiny App was developed that utilizes the final, available case model to make a prediction for a user-entered challenge. This interactive shiny app takes various inputs values and returns the predicted order, family and genus based on any combination of provided inputs.
+
+https://ryancooper.shinyapps.io/ShinyZoo/
+
+## Commentary
+
+I hope this report has demonstrated a viable approach for applying random forests to hierarchical taxonomy data, while addressing some of the issues of sparseness and imbalanced classes. It was my goal to demonstrate through this capstone project how I have come to understand and appreciate the R language, and how I have learned to implement lessons from the various courses throughout the HarvardX Data Science Professional Certificate program.
+
+This was a fascinating and fun experiment to try to solve several challenges in this dataset. The remarkable diversity of life on Earth cataloged through Pantheria and GBIF provides an extensive source of information - though not always a complete picture. It is quite awe-inspiring to consider that the Pantheria data was derived from over 3000 independent research sources - this project owes a huge debt of gratitude to the many dedicated researchers and data entry technicians who painstakingly compiled this collection of data.
+
+This dataset shows off the diversity of nature, and provides ample opportunities to explore the incredible variety of traits observed for the thousands of unique, individual species in the class of Mammalia. The biodiversity of Earth is a precious resource, and it is our responsibility to study, protect and preserve the many unique species with which we share the planet.
+
+### References
+
+Rafael Irizzary, Introduction to Data Science (2020), github page, 
+https://rafalab.github.io/dsbook/
+
+Leo Breiman, Random Forests (2001), Statistics Dept. University of California, Berkeley
+https://www.stat.berkeley.edu/~breiman/randomforest2001.pdf
+
+Chao Chen, Using Random Forest to Learn Imbalanced Data, Statistics Dept. University of California, Berkeley
+https://statistics.berkeley.edu/sites/default/files/tech-reports/666.pdf
+
+Andrew Gelman; Jennifer Hill,  Missing-data imputation, Data Analysis Using Regression and Multilevel/Hierarchical Models, (2006) Cambridge University Press
+
+E. Jones, et. al., PanTHERIA: a species-level database of life history, ecology, and geography of extant and recently extinct mammals., (2016): Ecological Society of AMerica http://esapubs.org/archive/ecol/E090/184/metadata.htm
+
+PanTHERIA is Made avaiable under Creative Commons 0. 
+To the extent possible under law, the authors have waived all copyright and related or neighboring rights to this data.
+
+Global Biodiversity Information Facility: Free and open access to biodiversity data - 
+https://www.gbif.org/
+
+Key Packages:
+
+DPLYR package
+https://cran.r-project.org/web/packages/dplyr/index.html
+
+GGPlot2 package
+https://cran.r-project.org/web/packages/ggplot2/index.html
+
+MICE package 
+https://cran.r-project.org/web/packages/mice/index.html 
+
+RGBIF Package 
+https://cran.r-project.org/web/packages/rgbif/index.html
+
+RPart Package 
+https://cran.r-project.org/web/packages/rpart/index.html
+
+Using Plot CP in RPart
+https://www.rdocumentation.org/packages/rpart/versions/4.1-15/topics/plotcp
+
+R Documentation
+https://www.rdocumentation.org
+
