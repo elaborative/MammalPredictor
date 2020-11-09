@@ -455,6 +455,7 @@ missing <- md.pattern(predictors_only %>% sample_n(100),rotate.names=TRUE,plot=T
 
 
 ## ----examine order data points, fig.width=12,fig.height=6-------------------------------------------------------------
+#create plot of species count by orders
 plot_ord <- tinyzoo %>% 
   group_by(taxo_order) %>% 
   dplyr::summarize(group_count =  n()) %>% 
@@ -468,21 +469,25 @@ plot_ord
 
 
 ## ---- fig.width=12,fig.height=12--------------------------------------------------------------------------------------
+#summarize orders
 all_ord <- tinyzoo %>% group_by(taxo_order) %>% 
   dplyr::summarize(group_count =  n()) 
 
+#summarize median count of species per order
 median_group_count <- median(all_ord$group_count)
 
+#create a table of minority orders
 minority_ord <- tinyzoo %>% group_by(taxo_order) %>% 
   dplyr::summarize(group_count =  n()) %>% 
   filter(group_count < median_group_count) 
 
+#how many are there?
 minority_groups <- nrow(minority_ord)
 
 
 
 ## ----examine family, fig.width=16,fig.height=6------------------------------------------------------------------------
-#create families plot
+#create families species count plot
 plot_fam <- tinyzoo %>% filter(taxo_order %in% c('Rodentia','Chiroptera','Primates')) %>%
   group_by(taxo_order, taxo_order_fam) %>% 
   dplyr::summarize(group_count =  n()) %>% 
@@ -521,7 +526,7 @@ minority_fam <- tinyzoo %>%
 
 
 ## ----examine family 2, fig.width=16,fig.height=6----------------------------------------------------------------------
-#create families plot
+#create genus species counts plot
 plot_fam <- tinyzoo %>% filter(taxo_order == 'Chiroptera' & taxo_family == 'Vespertilionidae') %>%
   group_by(taxo_order, taxo_genus) %>% 
   dplyr::summarize(group_count =  n()) %>% 
@@ -704,7 +709,7 @@ tinyzoolog %>% filter(taxo_order == 'Rodentia') %>% gather(varz, length,
 
 
 ## ----viz genus, fig.width=12,fig.height=12----------------------------------------------------------------------------
-# Plot distribution of each predictor stratified by family
+# Plot distribution of each predictor stratified by genus
 tinyzoolog %>% filter(taxo_order == 'Rodentia' & taxo_family == 'Sciuridae') %>% gather(varz, length, 
                 mass_grams_log10,
                 headlen_mm_log10,
@@ -740,13 +745,15 @@ library(grid)
 #create a dataset with just the predictors
 tzvars <- tinyzoo %>% select(mass_grams,headlen_mm,litter_size,litters_peryear,gestation_days,wean_age,sex_maturity,longevity_months,pop_density,diet_breadth,terrestriality,trophic_level,activity_cycle,range_km2,mid_lat,mid_lng)
 
+#examine correlations
 cor_tbl <- corrr::correlate(tzvars)
 
+#show the table
 cor_tbl
 
 
 ## ----getpointplot, fig.width=12,fig.height=16-------------------------------------------------------------------------
-
+#function to display correlated variables scatterplot with convex hull
 getpointplot <- function(data, col1, col2, colgroup, loglist, opac, desc) {
  hull <- data %>%
   filter(!is.na(!!sym(col1)) & !is.na(!!sym(col2))) %>%  
@@ -899,7 +906,7 @@ results_df
 
 ## ----partitions-------------------------------------------------------------------------------------------------------
 ##--------------------------------------
-
+#function to split the data partitions using splitstackshape
 createstratifiedpartitions <- function(dataset,groupedby,pct,setseed){
 
   set.seed(setseed, sample.kind = "Rounding")
@@ -958,6 +965,7 @@ count_orders <- nrow(tzNA_order_parts$testDS %>% group_by(taxo_order) %>% summar
 
 
 ## ----expected value---------------------------------------------------------------------------------------------------
+#estimate expected value of a radom guess
 ev_order <- round(1/nrow(all_ord),3)
 ev_fam <- round(1/nrow(all_fam),4)
 ev_genus <- round(1/nrow(all_genus),5)
@@ -984,7 +992,7 @@ measure_df_all %>% knitr::kable()
 
 
 ## ----check results 1 cm, fig.width=16,fig.height=16-------------------------------------------------------------------
-
+#check the results
 r = .8
 cmplot <- getcmplot(cm,"Baseline") 
 cmplot + annotate("path",color="blue",
@@ -1024,7 +1032,7 @@ fit_order <- rpart(taxo_order ~ .,
 #prx is teh prediction model
 prx <- predict(object=fit_order,tz_test[-1],type="class")
 
-#this is th actual orders extracted from the test set we just got predictions for
+#this is the actual orders extracted from the test set we just got predictions for
 tz_actual <- tz_test %>% mutate(taxo_order = as.factor(taxo_order)) %>% pull(taxo_order)
 
 #get a confusion matrrix with the predictions vs actuals
@@ -1036,6 +1044,7 @@ measure_df_all %>% knitr::kable()
 
 
 ## ----check results 2 cm, fig.width=16,fig.height=16-------------------------------------------------------------------
+#check the results
 cmplot <- getcmplot(cm,"RPart - Classification Tree - Unpruned")
 cmplot + 
   annotate("path",color="blue",
@@ -1074,6 +1083,7 @@ rpart.plot(fit_order,
 
 
 ## ---------------------------------------------------------------------------------------------------------------------
+#plot the complexity parameter
 plotcp(fit_order)
 
 
@@ -1095,7 +1105,7 @@ rpart.plot(pruned_fit,
 
 ## ----predict pruned, fig.width=16,fig.height=16-----------------------------------------------------------------------
 ##--------------------------------------
-
+#make a prediction using pruned tree
 prx <- predict(object=pruned_fit,tz_test[-1],type="class")
 
 tz_actual <- tz_test %>% mutate(taxo_order = as.factor(taxo_order)) %>% pull(taxo_order)
@@ -1111,10 +1121,12 @@ measure_df_all %>% knitr::kable()
 
 
 ## ----check results 4, fig.width=16,fig.height=16----------------------------------------------------------------------
+#view confusion matrix for pruned tree
 getcmplot(cm,"RPart - Classification Tree - Pruned")
 
 
 ## ----tryrandom, ECHO = TRUE-------------------------------------------------------------------------------------------
+#try one random guess
 set.seed(2, sample.kind = "Rounding")
 tryrow <- sample_n(tz_test, 1)
 
@@ -1173,6 +1185,7 @@ measure_df_all %>% knitr::kable()
 
 
 ## ----check results rf, fig.width=16,fig.height=16---------------------------------------------------------------------
+#view confusion matrix for rf
 getcmplot(cm,"Random Forest - With NA Values")
 
 
@@ -1234,11 +1247,13 @@ dfcm %>% ggplot() +
 
 
 ## ----check results rf 2, fig.width=16,fig.height=16-------------------------------------------------------------------
+#view confusion matrix for rf
 getcmplot(cm,"Random Forest - With 0's Imputed")
 
 
 ## ---- echo=TRUE-------------------------------------------------------------------------------------------------------
-
+#oversample function will oversample any rows in traindDS
+#classes of grouping with less than min_group, up to max_draws
 oversample <- function(trainDS, min_group, max_draws, grouping){
   
   trainDS2 <- trainDS
@@ -1315,7 +1330,7 @@ total_predicted <- measure_df5$Predicted
 
 
 ## ----check results os, fig.width=16,fig.height=16---------------------------------------------------------------------
-
+#view confusion matrix for rf
 cmplot <- getcmplot(cm,"Random Forest - Oversampled, With 0's Imputed")
 cmplot + 
    
@@ -1333,10 +1348,7 @@ cmplot +
 
 
 ## ---- fig.width=12,fig.height=8---------------------------------------------------------------------------------------
-#tzNA is the tinyzoo version that replaced the -999 with a standard R NA value
-
 library(dplyr)
-
 meanByGenus <- function(df, field) {
   rt <- data.frame()
   r2 <- data.frame()
@@ -1548,15 +1560,17 @@ imputeMeans <- function(tzMEAN){
   tzMEAN <- loopClass(tzMEAN,'range_km2')
   tzMEAN <- tzMEAN %>% select(-taxo_class)
   
+  #Optional depending on implementation -
   #remove estimated forewarm length for non flying mammals
-#remove geo data for marine mammals
-#tzMEAN <- tzMEAN %>% mutate(forearmlen_mm = ifelse(taxo_order == 'Chiroptera',forearmlen_mm,0))
-
-#tzMEAN <- tzMEAN %>% mutate(mid_lat = ifelse(taxo_order == 'Cetacea' | taxo_order == 'Sirenia',0,mid_lat))
-#tzMEAN <- tzMEAN %>% mutate(mid_lng = ifelse(taxo_order == 'Cetacea' | taxo_order == 'Sirenia',0,mid_lng))
-#tzMEAN <- tzMEAN %>% mutate(range_km2 = ifelse(taxo_order == 'Cetacea' | taxo_order == 'Sirenia',0,range_km2))
+  #remove geo data for marine mammals
+  
+  #tzMEAN <- tzMEAN %>% mutate(forearmlen_mm = ifelse(taxo_order == 'Chiroptera',forearmlen_mm,0))
+  #tzMEAN <- tzMEAN %>% mutate(mid_lat = ifelse(taxo_order == 'Cetacea' | taxo_order == 'Sirenia',0,mid_lat))
+  #tzMEAN <- tzMEAN %>% mutate(mid_lng = ifelse(taxo_order == 'Cetacea' | taxo_order == 'Sirenia',0,mid_lng))
+  #tzMEAN <- tzMEAN %>% mutate(range_km2 = ifelse(taxo_order == 'Cetacea' | taxo_order == 'Sirenia',0,range_km2))
 }
 
+#run the oversample function
 tzMEAN <- tzNA_order_parts$trainDS
 tzMEAN <- imputeMeans(tzMEAN)
 
@@ -1573,8 +1587,6 @@ tz_test <- tzNA_order_parts$testDS %>% select(-forearmlen_mm,-mid_lat,-mid_lng,-
 
 ## ---------------------------------------------------------------------------------------------------------------------
 set.seed(777, sample.kind = "Rounding")
-
-
 # Random Forest prediction of order data
 library(randomForest)
 rf_fit <- randomForest(
@@ -1597,11 +1609,12 @@ measure_df_all %>% knitr::kable()
 
 
 ## ----check results mean, fig.width=16,fig.height=16-------------------------------------------------------------------
+#view confusion matrix for rf with mean imputed
 getcmplot(cm,"Random Forest - MEAN Imputation - Complete Case Analysis")
 
 
 ## ---------------------------------------------------------------------------------------------------------------------
-#clear some of the varianbvles that are not "universally" recorded
+#clear some of the varianbles that are not "universally" recorded
 #we will address ways to use these in the construction of an available case moodel
 
 tz_train <- tzMEAN %>% select(-taxo_family,-taxo_genus,-taxo_species,-forearmlen_mm,-mid_lat,-mid_lng,-range_km2)
@@ -1635,6 +1648,7 @@ measure_df_all %>% knitr::kable()
 
 
 ## ----check results mean 2, fig.width=16,fig.height=16-----------------------------------------------------------------
+#view confusion matrix for rf with mean imputed
 getcmplot(cm,"Random Forest - MEAN Imputation with 0's")
 
 
@@ -1683,13 +1697,13 @@ predictorder <- function(trainDS,testDS,impute,oversamplemin,oversamplemax){
 
 
 ## ----predictgenus available case model, warning=FALSE, message=FALSE, echo=TRUE---------------------------------------
-
+#function to extract columns
 extract_columns <- function(data, desired_columns) {
     extracted_data <- data %>%
         select_(.dots = desired_columns)
     return(extracted_data)
 }
-
+#ADVANCED RECURSIVE MODEL TO PREDICT ORDER, FAMILY & GENUS
 predictgenusac <- function(trainDS,testRow,last_a){
   
   predicted_order <- ''
@@ -1738,10 +1752,9 @@ predictgenusac <- function(trainDS,testRow,last_a){
   
   predicted_order <- prx
   predicted_order <- as.character(predicted_order)
-   #-----------------------------------------
-    #CHECK FOR SUB FAMILES
+  #-----------------------------------------
+  #CHECK FOR SUB FAMILES
    
-  
   # print(paste("Predicted Order:",predicted_order))
   
    sub_family <- trainDS %>% 
@@ -1898,7 +1911,7 @@ predictgenusac <- function(trainDS,testRow,last_a){
 
 
 ## ----acgenusmodel container, warning=FALSE, message=FALSE, echo=TRUE--------------------------------------------------
-
+#ADVANCED MODEL CONTAINER FUNCTION
 acgenusmodel <- function(trainDS,testDS,impute,oversamplemin,oversamplemax){
 #create a table of the results of bernoulli trails using the hold-out data to train the recursive model
 #the recursive model must run one row at a time since each row it chooses spawns a new model training process
@@ -1966,6 +1979,8 @@ trials
 
 
 ## ----get basic model cm-----------------------------------------------------------------------------------------------
+#run the basic model
+
 tz_train <- tzNA_species_holdout$trainDS 
 tz_test <- tzNA_species_holdout$testDS
 
@@ -1979,31 +1994,37 @@ overall_accuracy <- cm$overall["Accuracy"]
 
 
 ## ----check results basic model, fig.width=16,fig.height=16------------------------------------------------------------
+#view confusion matrix final test - order rank
 getcmplot(cm,"Random Forest - Basic Model - Final Test - Rank: Order")
 
 
 ## ----measurebasicfinal------------------------------------------------------------------------------------------------
+#measure the model performance
 measure_df10 <- measuremodel(cm,"9- Random Forest","Basic Model - Order - FINAL","Order")
 measure_df_all <- measure_df_all %>% bind_rows(measure_df10)
 measure_df_all %>% knitr::kable()
 
 
 ## ----run final acmodel, warning=FALSE, message=FALSE------------------------------------------------------------------
+#set max oversample rows
 maxrows <- 5000
 
-#set teh data to use
+#set the data to use
 trainDS <- tzNA_species_holdout$trainDS
 testDS <- tzNA_species_holdout$testDS
 #run the model with mean imputation, oversampling orders 
-#with below the median (20) rows, up to double the size of the original trainingdata (4138 rows)
+#with below the median (20) rows, up to maxrows
+
 trials <- acgenusmodel(trainDS,testDS,'mean',median_group_count,maxrows)
 
 
 ## ----peek results-----------------------------------------------------------------------------------------------------
+#peek reults
 trials %>% sample_n(10) %>% select(pred_order,pred_fam,pred_genus,correct_order,correct_fam,correct_genus) %>% knitr::kable()
 
 
 ## ----get final order cm-----------------------------------------------------------------------------------------------
+#check correct orders vs predictions
 correct_ords <- trials  %>% pull(correct_order)
 pred_ords <- trials %>% pull(pred_order)
 check_ords <- c(correct_ords,pred_ords)  
@@ -2014,10 +2035,12 @@ cm <- confusionMatrix(data=factor(trials$pred_order,levels =ord_levels),referenc
 
 
 ## ----check results final order, fig.width=16,fig.height=16------------------------------------------------------------
+#view confusion matrix
 getcmplot(cm,"Random Forest - Available Case Model - Final Test - Rank: Order","All Predictions for Holdout data")
 
 
 ## ----get final family cm----------------------------------------------------------------------------------------------
+#check correct families vs predictions
 correct_fams <- trials %>% filter(correct_order == 'Rodentia')  %>% pull(correct_fam)
 pred_fams <- trials %>% filter(pred_order == 'Rodentia')  %>% pull(pred_fam)
 check_fams <- c(correct_fams,pred_fams)  
@@ -2028,10 +2051,12 @@ cm <- confusionMatrix(data=factor(trials$pred_fam,levels =fam_levels),reference=
 
 
 ## ----check results final fam, fig.width=16,fig.height=16--------------------------------------------------------------
+#view confusion matrix
 getcmplot(cm,"Random Forest - Available Case Model - Final Test - Rank: Family","Predictions of Families in Order: Rodentia for Holdout data")
 
 
 ## ----get final genus cm-----------------------------------------------------------------------------------------------
+#check correct genus vs predictions
 correct_gens <- trials %>% filter(correct_order == 'Rodentia') %>% filter(correct_fam == 'Cricetidae') %>% pull(correct_genus)
 pred_gens <- trials %>% filter(pred_order == 'Rodentia') %>% filter(pred_fam == 'Cricetidae') %>% pull(pred_genus)
 check_gens <- c(correct_gens,pred_gens)  
@@ -2041,10 +2066,12 @@ cm <- confusionMatrix(data=factor(trials$pred_genus,levels =genus_levels),refere
 
 
 ## ----check results final genus, fig.width=16,fig.height=16------------------------------------------------------------
+#view confusion matrix
 getcmplot(cm,"Random Forest - Available Case Model - Final Test - Rank: Genus","Predictions of Genus in Order: Rodentia > Family: Cricetidae for Holdout data")
 
 
 ## ----measure final order----------------------------------------------------------------------------------------------
+#get confusion matrix
 correct_ords <- trials  %>% pull(correct_order)
 pred_ords <- trials %>% pull(pred_order)
 check_ords <- c(correct_ords,pred_ords)  
@@ -2055,6 +2082,7 @@ cm <- confusionMatrix(data=factor(trials$pred_order,levels =ord_levels),referenc
 
 
 ## ----measureadvfinal order--------------------------------------------------------------------------------------------
+#measure model performance
 orders_predicted <- nrow(trials %>% group_by(pred_order) %>% 
                            summarize(ordercount = n()))
 
@@ -2063,6 +2091,7 @@ measure_df_all <- measure_df_all %>% bind_rows(measure_df11)
 
 
 ## ----measure final family---------------------------------------------------------------------------------------------
+#get confusion matrix
 correct_fams <- trials  %>% pull(correct_fam)
 pred_fams <- trials %>% pull(pred_fam)
 check_fams <- c(correct_fams,pred_fams)  
@@ -2073,6 +2102,7 @@ cm <- confusionMatrix(data=factor(trials$pred_fam,levels =fam_levels),reference=
 
 
 ## ----measureadvfinal family-------------------------------------------------------------------------------------------
+#measure model performance
 fams_predicted <- nrow(trials %>% group_by(pred_order,pred_fam) %>% 
                            summarize(ordercount = n()))
 
@@ -2081,6 +2111,7 @@ measure_df_all <- measure_df_all %>% bind_rows(measure_df12)
 
 
 ## ----measure final genus----------------------------------------------------------------------------------------------
+#get confusion matrix
 correct_gens <- trials %>% pull(correct_genus)
 pred_gens <- trials %>% filter(pred_genus != '') %>% pull(pred_genus)
 check_gens <- c(correct_gens,pred_gens)  
@@ -2090,6 +2121,7 @@ cm <- confusionMatrix(data=factor(trials$pred_genus,levels =genus_levels),refere
 
 
 ## ----measureadvfinal genus--------------------------------------------------------------------------------------------
+#measure model performance
 genus_predicted <- nrow(trials %>% group_by(pred_order,pred_fam,pred_genus) %>% 
                            summarize(ordercount = n()))
 
@@ -2099,6 +2131,7 @@ measure_df_all %>% knitr::kable()
 
 
 ## ----check accuracy by rank-------------------------------------------------------------------------------------------
+#check results
 orders_intraining <- nrow(tzNA_species_holdout$trainDS %>% 
                         group_by(taxo_order) %>% 
                         summarize(ordercount = n()))

@@ -20,7 +20,7 @@ knitr::opts_chunk$set(echo = FALSE, message=FALSE, warning=FALSE, cache=TRUE)
 
 # Introduction
 
-This project was developed for the HarvardX Data Science Professional Certificate program, Machine Learning Capstone Project taught by Rafael Irizarry, Ph.D. and offered through the EDX online learning platform. The skills demonstrated in this report are based on lessons in this course and the accompanying text, an Intrduction to Data Science. (Irizarry, 2020) 
+This project was developed for the HarvardX Data Science Professional Certificate program, Machine Learning Capstone Project taught by Rafael Irizarry, Ph.D. and offered through the EDX online learning platform. The skills demonstrated in this report are based on lessons in this course and the accompanying text, an Introduction to Data Science. (Irizarry, 2020) 
 
 Data available from the Ecological Society of America (ESA) PanTHERIA dataset (Jones, 2016) contains descriptive attributes concerning over 5,400 individual mammal species. Additional data derived from The Global Biodiversity Information Facility (GBIF, 2020) contains extended attributes and details that will support exploration of the Pantheria dataset. These data sources will be used in the construction and training of a machine learning classification model which will try to correctly classify mammals into their most likely taxonomy given a set of identifying physical, behavioral, reproductive and life history characteristics. 
 
@@ -423,7 +423,7 @@ ggsave("regionmap.png",plot = rmap,width=14,height=12)
 
 This map shows the vast scale of the Pantheria database - it contains data related to thousands of species from all over the world. The dataset contains a latitude/longitude (geocode) for the center point of each species' known range, which have been plotted on these maps. 
 
-Some orders like Diprotodontia (Marsupials) are found only in Australia -  Dermoptera (Flying Lemus) in Indonesia & the Phillipines, Proboscidea (Elephants) in Africa and India & Tubulidentata (Aardvarks) which occur only in Sub Saharan africa. 
+Some orders like Diprotodontia (Marsupials) are found only in Australia -  Dermoptera (Flying Lemurs) in Indonesia & the Phillipines, Proboscidea (Elephants) in Africa and India & Tubulidentata (Aardvarks) which occur only in Sub Saharan africa. 
 
 On the other hand, some species like Chiroptera (Bats) Carnivora (Meat Eaters), Rodentia (Rats & Mice), and Lagomorpha (Rabbits) are found all over the globe. Cetacea (Whales) and Sirenia (Manatees & Dugongs) have no geocodes or range data recorded, presumably because they are marine mammals.
 
@@ -645,6 +645,7 @@ Imputation of missing values could improve the number of possible outcomes, by s
 The charts below will examine the count, distribution and ranges of values in our data.  In this section we will consider the number of species per order.
 
 ```{r examine order data points, fig.width=12,fig.height=6}
+#create plot of species count by orders
 plot_ord <- tinyzoo %>% 
   group_by(taxo_order) %>% 
   dplyr::summarize(group_count =  n()) %>% 
@@ -659,15 +660,19 @@ plot_ord
 
 
 ```{r, fig.width=12,fig.height=12}
+#summarize orders
 all_ord <- tinyzoo %>% group_by(taxo_order) %>% 
   dplyr::summarize(group_count =  n()) 
 
+#summarize median count of species per order
 median_group_count <- median(all_ord$group_count)
 
+#create a table of minority orders
 minority_ord <- tinyzoo %>% group_by(taxo_order) %>% 
   dplyr::summarize(group_count =  n()) %>% 
   filter(group_count < median_group_count) 
 
+#how many are there?
 minority_groups <- nrow(minority_ord)
 
 ```
@@ -677,7 +682,7 @@ The median species count is `r median_group_count` species per order. We will co
 We are now performing the same analysis as above, but at the family level. Since there are so many outcomes, we will need to filter this chart to a subset of orders. We will just examine the 3 largest orders - Rodentia, Chiroptera and Primates. 
 
 ```{r examine family, fig.width=16,fig.height=6}
-#create families plot
+#create families species count plot
 plot_fam <- tinyzoo %>% filter(taxo_order %in% c('Rodentia','Chiroptera','Primates')) %>%
   group_by(taxo_order, taxo_order_fam) %>% 
   dplyr::summarize(group_count =  n()) %>% 
@@ -722,7 +727,7 @@ The median number of families per order across all species is: `r median_fam_cou
 We are now performing the same analysis as above, but at the genus level. 
 
 ```{r examine family 2, fig.width=16,fig.height=6}
-#create families plot
+#create genus species counts plot
 plot_fam <- tinyzoo %>% filter(taxo_order == 'Chiroptera' & taxo_family == 'Vespertilionidae') %>%
   group_by(taxo_order, taxo_genus) %>% 
   dplyr::summarize(group_count =  n()) %>% 
@@ -921,7 +926,7 @@ tinyzoolog %>% filter(taxo_order == 'Rodentia') %>% gather(varz, length,
 Predicting the family correctly could be more helpful in distinguishing fairly similar species - for example voles (Cricetidae), Rats (Muridae), and Gophers (Geomyidae) are all similar families in order Rodentia. 
 
 ```{r viz genus, fig.width=12,fig.height=12}
-# Plot distribution of each predictor stratified by family
+# Plot distribution of each predictor stratified by genus
 tinyzoolog %>% filter(taxo_order == 'Rodentia' & taxo_family == 'Sciuridae') %>% gather(varz, length, 
                 mass_grams_log10,
                 headlen_mm_log10,
@@ -968,8 +973,10 @@ library(grid)
 #create a dataset with just the predictors
 tzvars <- tinyzoo %>% select(mass_grams,headlen_mm,litter_size,litters_peryear,gestation_days,wean_age,sex_maturity,longevity_months,pop_density,diet_breadth,terrestriality,trophic_level,activity_cycle,range_km2,mid_lat,mid_lng)
 
+#examine correlations
 cor_tbl <- corrr::correlate(tzvars)
 
+#show the table
 cor_tbl
 ```
 
@@ -987,7 +994,7 @@ This table demonstrates that there are strong correlations between certain sets 
 These correlations suggest that some fields may be candidates for use of linear regression to impute some missing values, since the value of one know variable may be highly correlated with teh value of an unknown one. The following scatter plots have been faceted for easier readability, but they are still somewhat crowded. The convex hull shows the outline of each species x/y distribution of two highly correlated variables.
 
 ```{r getpointplot, fig.width=12,fig.height=16}
-
+#function to display correlated variables scatterplot with convex hull
 getpointplot <- function(data, col1, col2, colgroup, loglist, opac, desc) {
  hull <- data %>%
   filter(!is.na(!!sym(col1)) & !is.na(!!sym(col2))) %>%  
@@ -1084,7 +1091,7 @@ tzNA_pred_species <- tinyzoo %>% select(
 
 ```
 
-To create a test and training data set that have the same classes represented, we will have to stratify the data by order, then select a portion to of each order for training, and the rest for testing. To maximize the number of observations and to ensure a fair number of challenges - we will start by splitting the data into 50% test and 50% training data for each order. The splitstackshape package enables stratified selection of random data points to create a hold-out data set that would contain a large variety of classes to challenge the machine learning model.
+To create a test and training data set that have the same classes represented, we will have to stratify the data by order, then select a portion to of each order for training, and the rest for testing. To maximize the number of observations and to ensure a fair number of challenges - we will start by splitting the data into test and training data for each order. The splitstackshape package enables stratified selection of random data points to create a hold-out data set that would contain a large variety of classes to challenge the machine learning model.
 
 ## Assessing the Model Scores
 
@@ -1165,7 +1172,7 @@ We are splitting the test and training data using the stratified method so there
 
 ```{r partitions}
 ##--------------------------------------
-
+#function to split the data partitions using splitstackshape
 createstratifiedpartitions <- function(dataset,groupedby,pct,setseed){
 
   set.seed(setseed, sample.kind = "Rounding")
@@ -1228,6 +1235,7 @@ The partition has taken the original data table of `r originalrows` original row
 ## Baseline Model
 
 ```{r expected value}
+#estimate expected value of a radom guess
 ev_order <- round(1/nrow(all_ord),3)
 ev_fam <- round(1/nrow(all_fam),4)
 ev_genus <- round(1/nrow(all_genus),5)
@@ -1266,7 +1274,7 @@ measure_df_all %>% knitr::kable()
 The chart below visualizes the confusion matrix. A number in any cell other than a green cell, indicates a wrong guess and a number in a green cell is a correct guess. The reference or correct classes are listed on the y axis and the predictions made for each reference class are listed horizontally along the x axis. Annotations have been added on some of the confusion matrix visuals to call out specific data points or assist the reader in understanding how to read these charts. 
 
 ```{r check results 1 cm, fig.width=16,fig.height=16}
-
+#check the results
 r = .8
 cmplot <- getcmplot(cm,"Baseline") 
 cmplot + annotate("path",color="blue",
@@ -1316,7 +1324,7 @@ The model has been trained, now we will apply a prediction using test data. This
 #prx is teh prediction model
 prx <- predict(object=fit_order,tz_test[-1],type="class")
 
-#this is th actual orders extracted from the test set we just got predictions for
+#this is the actual orders extracted from the test set we just got predictions for
 tz_actual <- tz_test %>% mutate(taxo_order = as.factor(taxo_order)) %>% pull(taxo_order)
 
 #get a confusion matrrix with the predictions vs actuals
@@ -1330,6 +1338,7 @@ measure_df_all %>% knitr::kable()
 This CART results in about 70% accuracy. This is pretty good for a single decision tree - but this decision tree is overly complex and over training. It would need to be pruned to be more flexible.
 
 ```{r check results 2 cm, fig.width=16,fig.height=16}
+#check the results
 cmplot <- getcmplot(cm,"RPart - Classification Tree - Unpruned")
 cmplot + 
   annotate("path",color="blue",
@@ -1371,6 +1380,7 @@ rpart.plot(fit_order,
 The unpruned classification tree is very complex, and many orders are excluded. This plot demonstrates one challenge of using decision trees with sparse data over many outcomes. The classification above could be considered over-fitted. It is too complex and the number of splits is too great. It's going to match the training data very closely.  Pruning the tree could reduce complexity to a more practical level to make the model more robust. 
 
 ```{r}
+#plot the complexity parameter
 plotcp(fit_order)
 ```
 
@@ -1396,7 +1406,7 @@ To read the tree above, you must start at the top. Like our baseline model, the 
 
 ```{r predict pruned, fig.width=16,fig.height=16}
 ##--------------------------------------
-
+#make a prediction using pruned tree
 prx <- predict(object=pruned_fit,tz_test[-1],type="class")
 
 tz_actual <- tz_test %>% mutate(taxo_order = as.factor(taxo_order)) %>% pull(taxo_order)
@@ -1414,6 +1424,7 @@ measure_df_all %>% knitr::kable()
 The confusion matrix for the pruned tree is shown below. The results appear similar to the initial CART model, but with slightly lower overall accuracy at `r pruned_acc`.
 
 ```{r check results 4, fig.width=16,fig.height=16}
+#view confusion matrix for pruned tree
 getcmplot(cm,"RPart - Classification Tree - Pruned")
 ```
 
@@ -1424,6 +1435,7 @@ The code below allows you to select a random row from the data and try to predic
 This code will produce one random prediction using the rpart pruned CART model:
 
 ```{r tryrandom, ECHO = TRUE}
+#try one random guess
 set.seed(2, sample.kind = "Rounding")
 tryrow <- sample_n(tz_test, 1)
 
@@ -1494,6 +1506,7 @@ measure_df_all %>% knitr::kable()
 This model can only produce `r predictions` predictions out of `r tries` challenges.
 
 ```{r check results rf, fig.width=16,fig.height=16}
+#view confusion matrix for rf
 getcmplot(cm,"Random Forest - With NA Values")
 ```
 
@@ -1577,6 +1590,7 @@ dfcm %>% ggplot() +
 The random forest model with 0 imputed into NA's results in an overall accuracy of `r overall_accuracy`. This has increased the number of classes predicted and resulted in fairly accurate predictions across many of the classes. However the imputation of 0 in training and test data may be overfitting the model by expecting the same pattern of missingness.
 
 ```{r check results rf 2, fig.width=16,fig.height=16}
+#view confusion matrix for rf
 getcmplot(cm,"Random Forest - With 0's Imputed")
 ```
 
@@ -1589,7 +1603,8 @@ A random forest model that imputes 0 to every NA value is shown. This model is q
 Not only does this data suffer from sparseness, but it also has very imbalanced classes. By oversampling the minority classes, we can provide enough observations to appear more frequently in the training data sets and increase the chance that a minority class is selected by the model. 
 
 ```{r, echo=TRUE}
-
+#oversample function will oversample any rows in traindDS
+#classes of grouping with less than min_group, up to max_draws
 oversample <- function(trainDS, min_group, max_draws, grouping){
   
   trainDS2 <- trainDS
@@ -1670,7 +1685,7 @@ total_predicted <- measure_df5$Predicted
 ```
 
 ```{r check results os, fig.width=16,fig.height=16}
-
+#view confusion matrix for rf
 cmplot <- getcmplot(cm,"Random Forest - Oversampled, With 0's Imputed")
 cmplot + 
    
@@ -1698,10 +1713,7 @@ The imputed value will be an estimate based on the mean of each genus, family or
 To impute mean values - we will create a copy of the training data set that replaces missing values with estimated means based on the taxonomic classes assigned. This code will first attempt to get an average for each column that's missing, by grouping first at the genus, then the family, then the order, and finally from the entire Mammalia class.
 
 ```{r, fig.width=12,fig.height=8}
-#tzNA is the tinyzoo version that replaced the -999 with a standard R NA value
-
 library(dplyr)
-
 meanByGenus <- function(df, field) {
   rt <- data.frame()
   r2 <- data.frame()
@@ -1913,15 +1925,17 @@ imputeMeans <- function(tzMEAN){
   tzMEAN <- loopClass(tzMEAN,'range_km2')
   tzMEAN <- tzMEAN %>% select(-taxo_class)
   
+  #Optional depending on implementation -
   #remove estimated forewarm length for non flying mammals
-#remove geo data for marine mammals
-#tzMEAN <- tzMEAN %>% mutate(forearmlen_mm = ifelse(taxo_order == 'Chiroptera',forearmlen_mm,0))
-
-#tzMEAN <- tzMEAN %>% mutate(mid_lat = ifelse(taxo_order == 'Cetacea' | taxo_order == 'Sirenia',0,mid_lat))
-#tzMEAN <- tzMEAN %>% mutate(mid_lng = ifelse(taxo_order == 'Cetacea' | taxo_order == 'Sirenia',0,mid_lng))
-#tzMEAN <- tzMEAN %>% mutate(range_km2 = ifelse(taxo_order == 'Cetacea' | taxo_order == 'Sirenia',0,range_km2))
+  #remove geo data for marine mammals
+  
+  #tzMEAN <- tzMEAN %>% mutate(forearmlen_mm = ifelse(taxo_order == 'Chiroptera',forearmlen_mm,0))
+  #tzMEAN <- tzMEAN %>% mutate(mid_lat = ifelse(taxo_order == 'Cetacea' | taxo_order == 'Sirenia',0,mid_lat))
+  #tzMEAN <- tzMEAN %>% mutate(mid_lng = ifelse(taxo_order == 'Cetacea' | taxo_order == 'Sirenia',0,mid_lng))
+  #tzMEAN <- tzMEAN %>% mutate(range_km2 = ifelse(taxo_order == 'Cetacea' | taxo_order == 'Sirenia',0,range_km2))
 }
 
+#run the oversample function
 tzMEAN <- tzNA_order_parts$trainDS
 tzMEAN <- imputeMeans(tzMEAN)
 
@@ -1942,8 +1956,6 @@ This version uses a complete case analysis similar to model 4. It produces very 
 
 ```{r}
 set.seed(777, sample.kind = "Rounding")
-
-
 # Random Forest prediction of order data
 library(randomForest)
 rf_fit <- randomForest(
@@ -1967,13 +1979,14 @@ measure_df_all %>% knitr::kable()
 
 
 ```{r check results mean, fig.width=16,fig.height=16}
+#view confusion matrix for rf with mean imputed
 getcmplot(cm,"Random Forest - MEAN Imputation - Complete Case Analysis")
 ```
 
 Changing the NA's to 0 in the test data could increase outcomes - but it will probably reduce accuracy, since there will be many cases where a 0 imputed in the test data follows a decision tree rule based on a imputed mean estimate in the training data, and this will "throw off" the decision tree.
 
 ```{r}
-#clear some of the varianbvles that are not "universally" recorded
+#clear some of the varianbles that are not "universally" recorded
 #we will address ways to use these in the construction of an available case moodel
 
 tz_train <- tzMEAN %>% select(-taxo_family,-taxo_genus,-taxo_species,-forearmlen_mm,-mid_lat,-mid_lng,-range_km2)
@@ -2011,6 +2024,7 @@ measure_df_all %>% knitr::kable()
 As expected, the accuracy goes way down, because the imputed 0's in test data and imputed mean in the training data don't match well.
 
 ```{r check results mean 2, fig.width=16,fig.height=16}
+#view confusion matrix for rf with mean imputed
 getcmplot(cm,"Random Forest - MEAN Imputation with 0's")
 ```
 
@@ -2117,13 +2131,13 @@ Round 3 - Genus (most specific)
 This approach enables us to predict across more than 53 outcome classes, which is the upper limit of the random Forest package. Since the correct _order_ will be predicted about 80% of the time, this would be the maximum expected accuracy when predicting at the _family_ or _genus_ level. If the first guess was wrong the second must be wrong. However if it predicts the order right in the first round, then it should have a pretty good chance of getting the family right on the second step, etc. as it will use a more focused inter-class dataset to make this second and third layer of prediction.
 
 ```{r predictgenus available case model, warning=FALSE, message=FALSE, echo=TRUE}
-
+#function to extract columns
 extract_columns <- function(data, desired_columns) {
     extracted_data <- data %>%
         select_(.dots = desired_columns)
     return(extracted_data)
 }
-
+#ADVANCED RECURSIVE MODEL TO PREDICT ORDER, FAMILY & GENUS
 predictgenusac <- function(trainDS,testRow,last_a){
   
   predicted_order <- ''
@@ -2172,10 +2186,9 @@ predictgenusac <- function(trainDS,testRow,last_a){
   
   predicted_order <- prx
   predicted_order <- as.character(predicted_order)
-   #-----------------------------------------
-    #CHECK FOR SUB FAMILES
+  #-----------------------------------------
+  #CHECK FOR SUB FAMILES
    
-  
   # print(paste("Predicted Order:",predicted_order))
   
    sub_family <- trainDS %>% 
@@ -2334,7 +2347,7 @@ predictgenusac <- function(trainDS,testRow,last_a){
 This is the container for the actual model that runs through the test data one row at a time.
 
 ```{r acgenusmodel container, warning=FALSE, message=FALSE, echo=TRUE}
-
+#ADVANCED MODEL CONTAINER FUNCTION
 acgenusmodel <- function(trainDS,testDS,impute,oversamplemin,oversamplemax){
 #create a table of the results of bernoulli trails using the hold-out data to train the recursive model
 #the recursive model must run one row at a time since each row it chooses spawns a new model training process
@@ -2410,6 +2423,8 @@ trials
 The __predictorder__ function will run the basic order-level prediction model with 0 imputed and all data columns used.
 
 ```{r get basic model cm}
+#run the basic model
+
 tz_train <- tzNA_species_holdout$trainDS 
 tz_test <- tzNA_species_holdout$testDS
 
@@ -2427,10 +2442,12 @@ overall_accuracy <- cm$overall["Accuracy"]
 We have run the basic model against our hold-out data set. Now we will examine how the basic model performed.
 
 ```{r check results basic model, fig.width=16,fig.height=16}
+#view confusion matrix final test - order rank
 getcmplot(cm,"Random Forest - Basic Model - Final Test - Rank: Order")
 ```
 
 ```{r measurebasicfinal}
+#measure the model performance
 measure_df10 <- measuremodel(cm,"9- Random Forest","Basic Model - Order - FINAL","Order")
 measure_df_all <- measure_df_all %>% bind_rows(measure_df10)
 measure_df_all %>% knitr::kable()
@@ -2444,23 +2461,27 @@ The __acgenusmodel__ function will run the final available case model. This mode
 
 
 ```{r run final acmodel, warning=FALSE, message=FALSE}
+#set max oversample rows
 maxrows <- 5000
 
-#set teh data to use
+#set the data to use
 trainDS <- tzNA_species_holdout$trainDS
 testDS <- tzNA_species_holdout$testDS
 #run the model with mean imputation, oversampling orders 
-#with below the median (20) rows, up to double the size of the original trainingdata (4138 rows)
+#with below the median (20) rows, up to maxrows
+
 trials <- acgenusmodel(trainDS,testDS,'mean',median_group_count,maxrows)
 ```
 
 Randomly selecting 10 rows reveals how the model performed on just a few of the predictions. It has done pretty well - making a reasonable guess at both the Order and family level in most cases, with more confusion at the genus level, as expected.
 
 ```{r peek results}
+#peek reults
 trials %>% sample_n(10) %>% select(pred_order,pred_fam,pred_genus,correct_order,correct_fam,correct_genus) %>% knitr::kable()
 ```
 
 ```{r get final order cm}
+#check correct orders vs predictions
 correct_ords <- trials  %>% pull(correct_order)
 pred_ords <- trials %>% pull(pred_order)
 check_ords <- c(correct_ords,pred_ords)  
@@ -2473,12 +2494,14 @@ cm <- confusionMatrix(data=factor(trials$pred_order,levels =ord_levels),referenc
 Having examined a few of the raw predictions, we will now use our familiar confusion matrix visualization charts to examine the outcome of the final advanced available case model. Since this model is predicting three different sets of factors, three confusion matrices will be necessary to examine the predictions for the ranks of order, family and genus.
 
 ```{r check results final order, fig.width=16,fig.height=16}
+#view confusion matrix
 getcmplot(cm,"Random Forest - Available Case Model - Final Test - Rank: Order","All Predictions for Holdout data")
 ```
 
 The plot above explores the prediction across all orders. We can drill down to the family rank and observe how the model has performed within one order. We will use Rodentia since it is the order with the most predictions.
 
 ```{r get final family cm}
+#check correct families vs predictions
 correct_fams <- trials %>% filter(correct_order == 'Rodentia')  %>% pull(correct_fam)
 pred_fams <- trials %>% filter(pred_order == 'Rodentia')  %>% pull(pred_fam)
 check_fams <- c(correct_fams,pred_fams)  
@@ -2489,12 +2512,14 @@ cm <- confusionMatrix(data=factor(trials$pred_fam,levels =fam_levels),reference=
 ```
 
 ```{r check results final fam, fig.width=16,fig.height=16}
+#view confusion matrix
 getcmplot(cm,"Random Forest - Available Case Model - Final Test - Rank: Family","Predictions of Families in Order: Rodentia for Holdout data")
 ```
 
 And finally we can drill down to the genus rank and observe how the model has performed within one family. We will use Rodentia > Cricetidae since it is the family with the most predictions.
 
 ```{r get final genus cm}
+#check correct genus vs predictions
 correct_gens <- trials %>% filter(correct_order == 'Rodentia') %>% filter(correct_fam == 'Cricetidae') %>% pull(correct_genus)
 pred_gens <- trials %>% filter(pred_order == 'Rodentia') %>% filter(pred_fam == 'Cricetidae') %>% pull(pred_genus)
 check_gens <- c(correct_gens,pred_gens)  
@@ -2504,6 +2529,7 @@ cm <- confusionMatrix(data=factor(trials$pred_genus,levels =genus_levels),refere
 ```
 
 ```{r check results final genus, fig.width=16,fig.height=16}
+#view confusion matrix
 getcmplot(cm,"Random Forest - Available Case Model - Final Test - Rank: Genus","Predictions of Genus in Order: Rodentia > Family: Cricetidae for Holdout data")
 ```
 
@@ -2512,6 +2538,7 @@ getcmplot(cm,"Random Forest - Available Case Model - Final Test - Rank: Genus","
 Now we will see how the advanced model has performed across all predictions at each rank. 
 
 ```{r measure final order}
+#get confusion matrix
 correct_ords <- trials  %>% pull(correct_order)
 pred_ords <- trials %>% pull(pred_order)
 check_ords <- c(correct_ords,pred_ords)  
@@ -2522,6 +2549,7 @@ cm <- confusionMatrix(data=factor(trials$pred_order,levels =ord_levels),referenc
 ```
 
 ```{r measureadvfinal order}
+#measure model performance
 orders_predicted <- nrow(trials %>% group_by(pred_order) %>% 
                            summarize(ordercount = n()))
 
@@ -2530,6 +2558,7 @@ measure_df_all <- measure_df_all %>% bind_rows(measure_df11)
 ```
 
 ```{r measure final family}
+#get confusion matrix
 correct_fams <- trials  %>% pull(correct_fam)
 pred_fams <- trials %>% pull(pred_fam)
 check_fams <- c(correct_fams,pred_fams)  
@@ -2540,6 +2569,7 @@ cm <- confusionMatrix(data=factor(trials$pred_fam,levels =fam_levels),reference=
 ```
 
 ```{r measureadvfinal family}
+#measure model performance
 fams_predicted <- nrow(trials %>% group_by(pred_order,pred_fam) %>% 
                            summarize(ordercount = n()))
 
@@ -2548,6 +2578,7 @@ measure_df_all <- measure_df_all %>% bind_rows(measure_df12)
 ```
 
 ```{r measure final genus}
+#get confusion matrix
 correct_gens <- trials %>% pull(correct_genus)
 pred_gens <- trials %>% filter(pred_genus != '') %>% pull(pred_genus)
 check_gens <- c(correct_gens,pred_gens)  
@@ -2557,6 +2588,7 @@ cm <- confusionMatrix(data=factor(trials$pred_genus,levels =genus_levels),refere
 ```
 
 ```{r measureadvfinal genus}
+#measure model performance
 genus_predicted <- nrow(trials %>% group_by(pred_order,pred_fam,pred_genus) %>% 
                            summarize(ordercount = n()))
 
@@ -2566,6 +2598,7 @@ measure_df_all %>% knitr::kable()
 ```
 
 ```{r check accuracy by rank}
+#check results
 orders_intraining <- nrow(tzNA_species_holdout$trainDS %>% 
                         group_by(taxo_order) %>% 
                         summarize(ordercount = n()))
@@ -2645,13 +2678,13 @@ https://ryancooper.shinyapps.io/ShinyZoo/
 
 I hope this report has demonstrated a viable approach for applying random forests to hierarchical taxonomy data, while addressing some of the issues of sparseness and imbalanced classes. It was my goal to demonstrate through this capstone project how I have come to understand and appreciate the R language, and how I have learned to implement lessons from the various courses throughout the HarvardX Data Science Professional Certificate program, including visualization, data wrangling, probability, inference, and machine learning strategies.
 
-This was a fascinating and fun experiment to try to solve several challenges in this dataset. The remarkable diversity of life on Earth cataloged through Pantheria and GBIF provides an extensive source of informa===tion - though not always a complete picture. It is quite awe-inspiring to consider that the Pantheria data was derived from over 3000 independent research sources - this project owes a huge debt of gratitude to the many dedicated researchers and data entry technicians who painstakingly compiled this collection of data.
+This was a fascinating and fun experiment to try to solve several challenges in this dataset. The remarkable diversity of life on Earth cataloged through Pantheria and GBIF provides an extensive source of information - though not always a complete picture. It is quite awe-inspiring to consider that the Pantheria data was derived from over 3000 independent research sources - this project owes a huge debt of gratitude to the many dedicated researchers and data entry technicians who painstakingly compiled this collection of data.
 
 This dataset shows off the diversity of nature, and provides ample opportunities to explore the incredible variety of traits observed for the thousands of unique, individual species in the class of Mammalia. The biodiversity of Earth is a precious resource, and it is our responsibility to study, protect and preserve the many unique species with which we share the planet.
 
-## Acknowlegements
+## Acknowledgements
 
-I would like to thank Dr. Irizarry for the excellent content and lessons provided in this program, and the dedicated TA's and technicians suporting the HarvardX program and EDX learning platform. A very special Thank You to the student reviewers who took the time to review this project and lastly, a huge Thank You to my fiancé, Krista, who provided me an immeasurable quantity of patience, understanding and support in this endeavor.
+I would like to thank Dr. Irizarry for the excellent content and lessons provided in this program, and the dedicated TA's and technicians supporting the HarvardX program and EDX elearning platform; A very special Thank You to the student reviewers who took the time to review this project; and lastly, a huge Thank You to my fiancé, Krista, who provided me an immeasurable quantity of patience, understanding and support in this endeavor.
 
 ## References
 
